@@ -1,0 +1,13 @@
+# Core (generation + verification against any OpenAI-compatible API or vLLM)
+openai>=1.40.0
+PyYAML>=6.0
+
+# Optional: native Anthropic backend (llm.backend: anthropic)
+# anthropic>=0.39.0
+
+# Optional: hard-negative mining (negatives.enabled: true)
+# sentence-transformers>=3.0.0
+# numpy>=1.24
+
+# Dev / tests
+pytest>=7.0
