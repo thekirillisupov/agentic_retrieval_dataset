@@ -6,6 +6,8 @@ One interface, three backends:
                   *and* a locally served vLLM instance (`vllm serve ...` exposes
                   exactly this API), so the pipeline code never branches on which
                   you use — only ``base_url`` / ``model`` change.
+* ``gateway``   — direct HTTP POST with optional mTLS client certs and a custom
+                  JSON body (for corporate gateways that are not OpenAI-compatible).
 * ``anthropic`` — native Anthropic Messages API.
 * ``mock``      — deterministic offline backend for tests / dry runs (no network).
 
@@ -34,6 +36,8 @@ def make_client(cfg: LLMConfig) -> "BaseLLM":
     backend = cfg.backend.lower()
     if backend in ("openai", "vllm", "openai-compatible"):
         return OpenAICompatLLM(cfg)
+    if backend in ("gateway", "qwen_gateway"):
+        return GatewayLLM(cfg)
     if backend == "anthropic":
         return AnthropicLLM(cfg)
     if backend == "mock":
@@ -126,6 +130,70 @@ class OpenAICompatLLM(BaseLLM):
 
     async def aclose(self) -> None:
         await self._client.close()
+
+
+# --------------------------------------------------------------------------- #
+# Gateway (mTLS / custom HTTP — not OpenAI SDK)
+# --------------------------------------------------------------------------- #
+def parse_chat_completion(data: dict[str, Any]) -> str:
+    """Extract assistant text from an OpenAI-shaped chat completion JSON."""
+    try:
+        msg = data["choices"][0]["message"]
+        content = msg.get("content") or ""
+        if content:
+            return content
+        # Some Qwen gateways put text in reasoning_content when thinking is on.
+        return msg.get("reasoning_content") or ""
+    except (KeyError, IndexError, TypeError) as e:
+        raise LLMError(f"unexpected gateway response shape: {data!r}") from e
+
+
+class GatewayLLM(BaseLLM):
+    """POST JSON directly to ``base_url`` with optional client-cert auth.
+
+    Matches corporate gateways where curl works but the OpenAI SDK does not
+    (mTLS, non-/v1 paths, Qwen-specific body fields via ``extra_body``).
+    """
+
+    def __init__(self, cfg: LLMConfig):
+        super().__init__(cfg)
+        if not cfg.base_url:
+            raise ValueError("gateway backend requires llm.base_url (full POST URL)")
+        try:
+            import httpx
+        except ImportError as e:  # pragma: no cover
+            raise ImportError("pip install httpx — required for the gateway backend") from e
+        cert: str | tuple[str, str] | None = None
+        if cfg.cert_file and cfg.key_file:
+            cert = (cfg.cert_file, cfg.key_file)
+        elif cfg.cert_file:
+            cert = cfg.cert_file
+        self._client = httpx.AsyncClient(
+            cert=cert,
+            verify=cfg.verify_ssl,
+            timeout=httpx.Timeout(cfg.request_timeout),
+        )
+
+    async def _raw_complete(self, system: str, user: str, **kw: Any) -> str:
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user})
+
+        body: dict[str, Any] = {
+            "messages": messages,
+            "max_tokens": kw.pop("max_tokens", self.cfg.max_tokens),
+            "temperature": kw.pop("temperature", self.cfg.temperature),
+        }
+        body.update(self.cfg.extra_body)
+
+        resp = await self._client.post(self.cfg.base_url, json=body)
+        if resp.status_code >= 400:
+            raise LLMError(f"gateway HTTP {resp.status_code}: {resp.text[:500]}")
+        return parse_chat_completion(resp.json())
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
 
 # --------------------------------------------------------------------------- #

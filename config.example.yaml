@@ -21,6 +21,20 @@
 #        backend: anthropic
 #        model:   <anthropic model id>
 #        api_key_env: ANTHROPIC_API_KEY
+#
+#  (D) Corporate gateway (mTLS curl-style — NOT OpenAI SDK):
+#        backend: gateway
+#        base_url: https://sm.apps.example.ru/qwen_35   # full POST URL
+#        cert_file: published.pem
+#        key_file:  client.key
+#        verify_ssl: false
+#        temperature: 0.1
+#        max_tokens: 1536
+#        extra_body:
+#          top_p: 0.95
+#          reasoning: false
+#          chat_template_kwargs:
+#            enable_thinking: false
 # ─────────────────────────────────────────────────────────────────────────────
 
 log_level: INFO

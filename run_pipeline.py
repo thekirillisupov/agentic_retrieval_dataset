@@ -112,7 +112,7 @@ def main() -> None:
         "windows", "generate", "verify", "negatives", "finalize", "stats", "all"])
     p.add_argument("--config", default=None, help="path to YAML config")
     p.add_argument("--backend", default=None,
-                   help="override LLM backend for generator AND judge (openai|anthropic|mock)")
+                   help="override LLM backend for generator AND judge (openai|gateway|anthropic|mock)")
     p.add_argument("--chunks", default=None, help="override path to chunks file/dir")
     p.add_argument("--out-dir", default=None, help="override output directory")
     args = p.parse_args()

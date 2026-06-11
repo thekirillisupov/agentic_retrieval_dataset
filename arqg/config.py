@@ -11,10 +11,11 @@ from typing import Any
 
 @dataclass
 class LLMConfig:
-    # backend: "openai" (any OpenAI-compatible endpoint incl. vLLM), "anthropic", or "mock"
+    # backend: "openai" (OpenAI-compatible incl. vLLM), "gateway" (mTLS/custom HTTP),
+    #          "anthropic", or "mock"
     backend: str = "openai"
     model: str = "Qwen/Qwen2.5-72B-Instruct"
-    base_url: str = "http://localhost:8000/v1"   # vLLM default; set to provider URL for API
+    base_url: str = "http://localhost:8000/v1"   # vLLM default; gateway: full POST URL
     api_key_env: str = "OPENAI_API_KEY"           # name of env var holding the key
     api_key: str = ""                             # filled from env at load time
     temperature: float = 0.4
@@ -24,6 +25,11 @@ class LLMConfig:
     max_concurrency: int = 16                     # in-flight requests
     # vLLM served models accept arbitrary keys; "EMPTY" is the conventional placeholder
     default_dummy_key: str = "EMPTY"
+    # gateway backend: client-cert auth + custom JSON body (see config.example.yaml)
+    cert_file: str = ""
+    key_file: str = ""
+    verify_ssl: bool = True
+    extra_body: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
