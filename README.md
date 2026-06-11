@@ -27,6 +27,8 @@ pipeline attacks each failure mode explicitly:
 | Hallucinated answers | **Groundedness judge** checks the answer is fully supported by the gold chunks |
 | "Согласно тексту…" / context-dependent | Generator prompt forbids it; judge enforces a **standalone** check |
 | Trivia answerable without retrieval | Judge flags **answerable-from-world-knowledge** and drops it |
+| Exam-style phrasing unlike real users | **Style sampling**: each question is generated in one of several realistic user styles (simple user, novice, expert, search query), with few-shot good/bad examples in the prompt |
+| Question copies rare phrases verbatim (retrieval becomes trivial lexical match) | Prompt enforces paraphrasing in the asker's own words |
 | Junk chunks (headers, page numbers, min=1 char) | Seed eligibility filter (length / word / Cyrillic ratios); junk stays usable only as *neighbour context* |
 | Giant un-split chunks (max≈39k) / huge docs dominating | `max_chars` seed cap, `max_window_chars`, `max_windows_per_file` |
 
@@ -149,6 +151,7 @@ python run_pipeline.py all --config config.example.yaml --backend mock \
   "gold_chunk_ids": ["doc_b.txt::1", "doc_b.txt::2"],
   "file_name": "doc_b.txt",
   "question_type": "multi_hop | aggregation | comparison | condition",
+  "question_style": "simple_user | novice | expert | search_query",
   "num_gold": 2,
   "window_chunk_ids": ["doc_b.txt::1", "doc_b.txt::2", "doc_b.txt::3"],
   "hard_negative_ids": ["other::5", "…"],
@@ -162,6 +165,23 @@ python run_pipeline.py all --config config.example.yaml --backend mock \
 the question was generated from (a superset of gold). `chunk_id == "{file_name}::{index}"`.
 
 ---
+
+## Question styles (matching real user queries)
+
+Real users don't ask exam questions. Each generated question is written in a sampled
+style (recorded as `question_style`, weights configurable in `generate.styles`):
+
+| Style | Sounds like | Default weight |
+|---|---|---|
+| `simple_user` | short colloquial question, support-chat / search-bar tone | 0.45 |
+| `novice` | no domain terminology — describes things in everyday words | 0.20 |
+| `expert` | precise domain phrasing | 0.20 |
+| `search_query` | 3–8 word search-bar query, may lack a verb or "?" | 0.15 |
+
+Sampling is deterministic per window (`style_seed`), so resumed runs keep the same mix.
+The groundedness judge is explicitly told that colloquial/short phrasing is *not* a
+defect, so simple questions aren't filtered out for style. Tune the weights to match
+your production query logs; set a weight to `0` to disable a style.
 
 ## Scaling to your corpus (60,855 chunks / 8,257 docs)
 

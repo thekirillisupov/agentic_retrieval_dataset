@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import random
 
 from .config import Config
 from .llm import BaseLLM, LLMError
-from .prompts import GEN_SYSTEM, gen_user
+from .prompts import GEN_SYSTEM, STYLES, gen_user
 from .schema import Candidate, Chunk, Window
 from .utils import append_jsonl, load_done_keys, log, read_jsonl
 
@@ -36,12 +37,23 @@ async def generate(cfg: Config, llm: BaseLLM) -> None:
     log.info("generate: wrote %d candidates -> %s", written, cfg.paths.candidates)
 
 
+def _sample_style(cfg: Config, window_id: str, n: int) -> str:
+    """Deterministic per (window, question) so resumed runs keep the same mix."""
+    styles = {k: v for k, v in cfg.generate.styles.items() if k in STYLES and v > 0}
+    if not styles:
+        return "simple_user"
+    rng = random.Random(f"{cfg.generate.style_seed}|{window_id}|{n}")
+    names = list(styles)
+    return rng.choices(names, weights=[styles[s] for s in names], k=1)[0]
+
+
 async def _generate_for_window(cfg: Config, llm: BaseLLM, w: Window) -> list[Candidate]:
     chunks = [Chunk(w.file_name, idx, txt) for idx, txt in zip(w.indices, w.texts)]
     valid_ids = set(w.chunk_ids)
     out: list[Candidate] = []
     for n in range(cfg.generate.questions_per_window):
-        obj = await llm.complete_json(GEN_SYSTEM, gen_user(chunks))
+        style = _sample_style(cfg, w.window_id, n)
+        obj = await llm.complete_json(GEN_SYSTEM, gen_user(chunks, style))
         req = _clean_ids(obj.get("required_chunk_ids", []), valid_ids)
         question = (obj.get("question") or "").strip()
         answer = (obj.get("answer") or "").strip()
@@ -60,6 +72,7 @@ async def _generate_for_window(cfg: Config, llm: BaseLLM, w: Window) -> list[Can
             answer=answer,
             required_chunk_ids=req,
             question_type=str(obj.get("question_type", "multi_hop")),
+            question_style=style,
             reasoning=str(obj.get("reasoning", "")),
             generation_model=cfg.llm.model,
             raw=obj,

@@ -82,8 +82,10 @@ def cmd_stats(cfg: Config) -> None:
         return
     golds = [len(i.get("gold_chunk_ids", [])) for i in items]
     types: dict[str, int] = {}
+    styles: dict[str, int] = {}
     for i in items:
         types[i.get("question_type", "?")] = types.get(i.get("question_type", "?"), 0) + 1
+        styles[i.get("question_style", "?")] = styles.get(i.get("question_style", "?"), 0) + 1
     print(f"items:           {len(items)}")
     print(f"gold chunks/item mean={st.mean(golds):.2f} median={st.median(golds)} "
           f"min={min(golds)} max={max(golds)}")
@@ -91,6 +93,7 @@ def cmd_stats(cfg: Config) -> None:
           f"({100*sum(g>=2 for g in golds)/len(golds):.1f}%)")
     print(f"with hard negatives:    {sum(1 for i in items if i.get('hard_negative_ids'))}")
     print("question types:  " + ", ".join(f"{k}={v}" for k, v in sorted(types.items())))
+    print("question styles: " + ", ".join(f"{k}={v}" for k, v in sorted(styles.items())))
 
 
 async def cmd_all(cfg: Config) -> None:

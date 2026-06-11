@@ -68,6 +68,7 @@ class Candidate:
     answer: str
     required_chunk_ids: list[str]      # model's claim of needed chunks
     question_type: str
+    question_style: str = "simple_user"
     reasoning: str = ""
     generation_model: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
@@ -89,6 +90,7 @@ class DatasetItem:
     gold_chunk_ids: list[str]          # minimal, verified-necessary set
     file_name: str
     question_type: str
+    question_style: str
     num_gold: int
     window_chunk_ids: list[str]
     verification: dict[str, Any] = field(default_factory=dict)

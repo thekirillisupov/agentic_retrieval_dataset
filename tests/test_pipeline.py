@@ -96,6 +96,38 @@ def test_end_to_end_mock(tmp_path):
         assert set(it["gold_chunk_ids"]).issubset(set(it["window_chunk_ids"]))
 
 
+def test_style_sampling_deterministic_and_injected():
+    from arqg.generate import _sample_style
+    from arqg.prompts import STYLES, gen_user
+    from arqg.schema import Chunk
+
+    cfg = Config()
+    s1 = _sample_style(cfg, "w_abc", 0)
+    s2 = _sample_style(cfg, "w_abc", 0)
+    assert s1 == s2 and s1 in STYLES          # deterministic, valid style
+    # weights restricted to one style force that style
+    cfg.generate.styles = {"search_query": 1.0}
+    assert _sample_style(cfg, "w_any", 0) == "search_query"
+    # unknown styles in config are ignored, falling back gracefully
+    cfg.generate.styles = {"bogus": 1.0}
+    assert _sample_style(cfg, "w_any", 0) == "simple_user"
+    # the style instruction text is actually injected into the prompt
+    chunk = Chunk("f", 0, "текст")
+    assert STYLES["expert"][:30] in gen_user([chunk], "expert")
+
+
+def test_dataset_items_carry_style(tmp_path):
+    cfg = _cfg(tmp_path)
+    store = ChunkStore(load_chunks(cfg.paths.chunks))
+    windows = build_windows(store, cfg.windows, cfg.filters)
+    write_jsonl(cfg.paths.windows, (w.to_dict() for w in windows))
+    asyncio.run(run_generate(cfg, make_client(cfg.llm)))
+    asyncio.run(run_verify(cfg, make_client(cfg.verify.judge), store))
+    from arqg.prompts import STYLES
+    items = list(read_jsonl(cfg.paths.verified))
+    assert items and all(i["question_style"] in STYLES for i in items)
+
+
 def test_resume_is_idempotent(tmp_path):
     cfg = _cfg(tmp_path)
     store = ChunkStore(load_chunks(cfg.paths.chunks))

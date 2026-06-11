@@ -53,6 +53,16 @@ class GenerateConfig:
     questions_per_window: int = 1
     require_multi_chunk: bool = True
     min_gold_chunks: int = 2
+    # Question style mix: style name -> sampling weight. Styles mimic real user
+    # phrasing (see arqg/prompts.py STYLES). One style is sampled per question,
+    # deterministically per window, and recorded in the dataset.
+    styles: dict[str, float] = field(default_factory=lambda: {
+        "simple_user": 0.45,
+        "novice": 0.20,
+        "expert": 0.20,
+        "search_query": 0.15,
+    })
+    style_seed: int = 17
 
 
 @dataclass
