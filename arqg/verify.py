@@ -68,22 +68,29 @@ async def _verify_one(cfg: Config, judge: BaseLLM, store: ChunkStore,
     vc = cfg.verify
     verdict: dict = {}
 
+    # Per-candidate policy lets one verify stage serve both generators:
+    # neighbour multi-hop (min_gold>=2, minimised) and document simple/hard
+    # (simple: gold=1, no minimality; hard: many anchors, minimised).
+    min_gold = max(1, getattr(c, "min_gold", cfg.generate.min_gold_chunks))
+    run_minimality = vc.run_minimality and getattr(c, "run_minimality", True)
+    drop_single = vc.drop_if_single_chunk_sufficient and getattr(c, "enforce_multi_chunk", True)
+
     # --- Judge 2 first: establish the minimal necessary gold set --------- #
-    gold_ids = list(c.required_chunk_ids)
-    if vc.run_minimality:
-        cand_chunks = _chunks_for(store, c.required_chunk_ids)
-        if len(cand_chunks) < cfg.generate.min_gold_chunks:
-            return None
+    gold_ids = [i for i in c.required_chunk_ids if store.get_by_id(i) is not None]
+    if len(gold_ids) < min_gold:
+        return None
+    if run_minimality and len(gold_ids) >= 2:
+        cand_chunks = _chunks_for(store, gold_ids)
         m = await judge.complete_json(JUDGE_SYSTEM, minimality_user(c.question, cand_chunks))
         verdict["minimality"] = m
-        necessary = [i for i in m.get("necessary_chunk_ids", []) if i in set(c.required_chunk_ids)]
+        necessary = [i for i in m.get("necessary_chunk_ids", []) if i in set(gold_ids)]
         if necessary:
             gold_ids = necessary
         if not m.get("answerable", True):
             return None
-        if vc.drop_if_single_chunk_sufficient and m.get("single_chunk_sufficient", False):
+        if drop_single and m.get("single_chunk_sufficient", False):
             return None
-        if len(gold_ids) < cfg.generate.min_gold_chunks:
+        if len(gold_ids) < min_gold:
             return None
 
     # --- Judge 1: groundedness / standalone / specificity ---------------- #
@@ -111,6 +118,8 @@ async def _verify_one(cfg: Config, judge: BaseLLM, store: ChunkStore,
         question_style=c.question_style,
         num_gold=len(gold_ids),
         window_chunk_ids=c.window_chunk_ids,
+        profile=getattr(c, "profile", "neighbor_multihop"),
+        difficulty=getattr(c, "difficulty", "hard"),
         verification=verdict,
         generation_model=c.generation_model,
         judge_model=cfg.verify.judge.model,

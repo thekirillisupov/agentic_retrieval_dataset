@@ -128,6 +128,91 @@ def test_dataset_items_carry_style(tmp_path):
     assert items and all(i["question_style"] in STYLES for i in items)
 
 
+def test_doc_units_span_whole_documents():
+    from arqg.docunits import build_doc_units
+    cfg = Config()
+    cfg.paths.chunks = SAMPLE
+    store = ChunkStore(load_chunks(SAMPLE))
+    units = build_doc_units(store, cfg.docgen, cfg.filters)
+    # small sample docs (4 chunks each) fit the caps -> one unit per document
+    assert len(units) == 2
+    for u in units:
+        assert u.window_id.startswith("d_")           # distinct id namespace
+        assert u.indices == [0, 1, 2, 3]              # whole document
+        assert len(set(c.split("::")[0] for c in u.chunk_ids)) == 1
+
+
+def test_doc_units_split_oversized_documents():
+    from arqg.docunits import build_doc_units
+    from arqg.schema import Chunk
+    para = "Это предложение содержит несколько обычных русских слов для теста. " * 18
+    chunks = [Chunk("big.txt", i, para) for i in range(10)]   # ~1200 chars each
+    store = ChunkStore(chunks)
+    cfg = Config()
+    cfg.docgen.units.max_doc_chars = 2500   # ~2 chunks per span
+    cfg.docgen.units.max_units_per_file = 10
+    units = build_doc_units(store, cfg.docgen, cfg.filters)
+    assert len(units) >= 4                  # 10 chunks split into several spans
+    for u in units:
+        assert u.n_chars <= 2500 or len(u.indices) == 1
+
+
+def test_doc_end_to_end_simple_and_hard(tmp_path):
+    from arqg.docunits import build_doc_units
+    from arqg.generate_docs import generate_docs as run_gen_docs
+    cfg = _cfg(tmp_path)
+    cfg.generate.enabled = False
+    cfg.docgen.enabled = True
+    # force a 50/50 deterministic mix by running enough units (sample is 2 docs)
+    cfg.docgen.questions_per_unit = 1
+    store = ChunkStore(load_chunks(cfg.paths.chunks))
+
+    units = build_doc_units(store, cfg.docgen, cfg.filters)
+    write_jsonl(cfg.paths.docunits, (u.to_dict() for u in units))
+    asyncio.run(run_gen_docs(cfg, make_client(cfg.llm)))
+
+    cands = list(read_jsonl(cfg.paths.candidates))
+    assert cands
+    for c in cands:
+        assert c["profile"] == "doc_simple_hard"
+        assert c["difficulty"] in ("simple", "hard")
+        if c["difficulty"] == "simple":
+            assert len(c["required_chunk_ids"]) == 1
+            assert c["min_gold"] == 1 and c["run_minimality"] is False
+        else:
+            assert len(c["required_chunk_ids"]) >= 2
+
+    asyncio.run(run_verify(cfg, make_client(cfg.verify.judge), store))
+    items = list(read_jsonl(cfg.paths.verified))
+    assert items
+    for it in items:
+        # gold is always a subset of the unit and respects the difficulty floor
+        assert set(it["gold_chunk_ids"]).issubset(set(it["window_chunk_ids"]))
+        if it["difficulty"] == "simple":
+            assert it["num_gold"] == 1
+        else:
+            assert it["num_gold"] >= 2
+
+
+def test_verify_keeps_single_gold_when_policy_allows(tmp_path):
+    """A simple (gold=1) candidate must survive verify, unlike the default
+    multi-hop policy which would drop single-chunk items."""
+    from arqg.schema import Candidate
+    cfg = _cfg(tmp_path)
+    store = ChunkStore(load_chunks(cfg.paths.chunks))
+    simple = Candidate(
+        candidate_id="x__c0", window_id="d_x", file_name="doc_a.txt",
+        window_chunk_ids=["doc_a.txt::0", "doc_a.txt::1"],
+        question="вопрос?", answer="ответ", required_chunk_ids=["doc_a.txt::0"],
+        question_type="factoid", profile="doc_simple_hard", difficulty="simple",
+        min_gold=1, enforce_multi_chunk=False, run_minimality=False,
+    )
+    write_jsonl(cfg.paths.candidates, [simple.to_dict()])
+    asyncio.run(run_verify(cfg, make_client(cfg.verify.judge), store))
+    items = list(read_jsonl(cfg.paths.verified))
+    assert len(items) == 1 and items[0]["num_gold"] == 1
+
+
 def test_resume_is_idempotent(tmp_path):
     cfg = _cfg(tmp_path)
     store = ChunkStore(load_chunks(cfg.paths.chunks))

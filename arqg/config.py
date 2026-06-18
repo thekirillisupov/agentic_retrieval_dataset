@@ -56,6 +56,7 @@ class WindowConfig:
 
 @dataclass
 class GenerateConfig:
+    enabled: bool = True           # neighbour-window multi-hop generator
     questions_per_window: int = 1
     require_multi_chunk: bool = True
     min_gold_chunks: int = 2
@@ -69,6 +70,49 @@ class GenerateConfig:
         "search_query": 0.15,
     })
     style_seed: int = 17
+
+
+@dataclass
+class DocUnitConfig:
+    """How to turn a whole document into generation unit(s)."""
+    max_doc_chars: int = 30000     # cap a unit's size (huge docs are split into spans)
+    max_doc_chunks: int = 40       # cap a unit's chunk count
+    min_unit_chunks: int = 1       # keep units with at least this many chunks
+    max_units_per_file: int = 4    # how many spans to keep from a very large document
+    target_units: int = 2000       # total units to build (0 = all)
+    seed: int = 23
+
+
+@dataclass
+class DocGenConfig:
+    """SECOND, separate generation process: simple/hard questions over a whole
+    document with NO limit on the number of anchor passages.
+
+    * simple → answer fully contained in ONE passage (gold = 1)
+    * hard   → answer requires combining MANY passages across the document
+               (gold >= hard_min_gold, no upper bound)
+
+    Output format is identical to the neighbour generator (keeps gold_chunk_ids).
+    """
+    enabled: bool = False
+    questions_per_unit: int = 1
+    # difficulty mix (sampled per unit)
+    difficulty_weights: dict[str, float] = field(default_factory=lambda: {
+        "simple": 0.5,
+        "hard": 0.5,
+    })
+    simple_max_gold: int = 1       # passages a "simple" question may rest on
+    hard_min_gold: int = 2         # minimum anchors for a "hard" question
+    hard_max_gold: int = 0         # 0 = unlimited anchor passages
+    # reuse the same user-phrasing styles as the neighbour generator
+    styles: dict[str, float] = field(default_factory=lambda: {
+        "simple_user": 0.45,
+        "novice": 0.20,
+        "expert": 0.20,
+        "search_query": 0.15,
+    })
+    style_seed: int = 29
+    units: DocUnitConfig = field(default_factory=DocUnitConfig)
 
 
 @dataclass
@@ -102,6 +146,10 @@ class PathsConfig:
         return os.path.join(self.out_dir, "windows.jsonl")
 
     @property
+    def docunits(self) -> str:
+        return os.path.join(self.out_dir, "docunits.jsonl")
+
+    @property
     def candidates(self) -> str:
         return os.path.join(self.out_dir, "candidates.jsonl")
 
@@ -120,6 +168,7 @@ class Config:
     filters: FilterConfig = field(default_factory=FilterConfig)
     windows: WindowConfig = field(default_factory=WindowConfig)
     generate: GenerateConfig = field(default_factory=GenerateConfig)
+    docgen: DocGenConfig = field(default_factory=DocGenConfig)
     verify: VerifyConfig = field(default_factory=VerifyConfig)
     negatives: NegativesConfig = field(default_factory=NegativesConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)

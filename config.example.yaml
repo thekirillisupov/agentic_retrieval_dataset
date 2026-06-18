@@ -73,8 +73,9 @@ windows:
   stride: 1
   seed: 13
 
-# Generation --------------------------------------------------------------------
+# Generation process #1 — neighbour-window multi-hop questions ------------------
 generate:
+  enabled: true                  # set false to skip this generator entirely
   questions_per_window: 1
   require_multi_chunk: true
   min_gold_chunks: 2            # final dataset requires >= this many gold chunks
@@ -90,6 +91,38 @@ generate:
     expert: 0.20
     search_query: 0.15
   style_seed: 17
+
+# Generation process #2 — document-level simple / hard questions ----------------
+# Separate, independently-switchable generator. Works over a WHOLE document and
+# has NO limit on the number of anchor passages:
+#   simple → answer fully contained in ONE passage              (gold = 1)
+#   hard   → answer requires combining MANY passages in the doc (gold >= 2, no cap)
+# Output format is identical (keeps gold_chunk_ids); it shares the verify stage.
+# Run alongside #1 (both feed candidates.jsonl) or on its own:
+#   set generate.enabled: false and docgen.enabled: true, then `all`,
+#   or run stages explicitly: docunits -> gen-docs -> verify -> finalize
+docgen:
+  enabled: false
+  questions_per_unit: 1
+  difficulty_weights:            # sampled per document unit
+    simple: 0.5
+    hard: 0.5
+  simple_max_gold: 1             # passages a "simple" question may rest on
+  hard_min_gold: 2              # minimum anchors for a "hard" question
+  hard_max_gold: 0             # 0 = unlimited anchor passages
+  styles:                        # same user-phrasing styles as generator #1
+    simple_user: 0.45
+    novice: 0.20
+    expert: 0.20
+    search_query: 0.15
+  style_seed: 29
+  units:
+    max_doc_chars: 30000         # huge documents are split into spans this big
+    max_doc_chunks: 40
+    min_unit_chunks: 1
+    max_units_per_file: 4
+    target_units: 2000           # total document units to build (0 = all)
+    seed: 23
 
 # Verification (the quality gate) -----------------------------------------------
 verify:

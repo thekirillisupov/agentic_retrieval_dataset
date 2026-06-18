@@ -37,14 +37,21 @@ async def generate(cfg: Config, llm: BaseLLM) -> None:
     log.info("generate: wrote %d candidates -> %s", written, cfg.paths.candidates)
 
 
+def sample_weighted(weights: dict[str, float], seed_key: str, fallback: str) -> str:
+    """Deterministic weighted choice keyed by a string, so resumed runs are
+    reproducible. Ignores non-positive weights; falls back if none remain."""
+    items = {k: v for k, v in weights.items() if v and v > 0}
+    if not items:
+        return fallback
+    rng = random.Random(seed_key)
+    names = list(items)
+    return rng.choices(names, weights=[items[s] for s in names], k=1)[0]
+
+
 def _sample_style(cfg: Config, window_id: str, n: int) -> str:
     """Deterministic per (window, question) so resumed runs keep the same mix."""
-    styles = {k: v for k, v in cfg.generate.styles.items() if k in STYLES and v > 0}
-    if not styles:
-        return "simple_user"
-    rng = random.Random(f"{cfg.generate.style_seed}|{window_id}|{n}")
-    names = list(styles)
-    return rng.choices(names, weights=[styles[s] for s in names], k=1)[0]
+    styles = {k: v for k, v in cfg.generate.styles.items() if k in STYLES}
+    return sample_weighted(styles, f"{cfg.generate.style_seed}|{window_id}|{n}", "simple_user")
 
 
 async def _generate_for_window(cfg: Config, llm: BaseLLM, w: Window) -> list[Candidate]:

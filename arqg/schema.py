@@ -69,6 +69,14 @@ class Candidate:
     required_chunk_ids: list[str]      # model's claim of needed chunks
     question_type: str
     question_style: str = "simple_user"
+    # --- generation provenance + per-candidate verification policy --------- #
+    # These let one verify stage handle candidates from different generation
+    # processes (neighbour-window multi-hop vs document simple/hard).
+    profile: str = "neighbor_multihop"   # which generator produced this
+    difficulty: str = "hard"             # "simple" | "hard"
+    min_gold: int = 2                    # required minimum gold chunks after verify
+    enforce_multi_chunk: bool = True     # drop if a single chunk alone suffices
+    run_minimality: bool = True          # run the gold-set minimisation judge
     reasoning: str = ""
     generation_model: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
@@ -93,6 +101,8 @@ class DatasetItem:
     question_style: str
     num_gold: int
     window_chunk_ids: list[str]
+    profile: str = "neighbor_multihop"
+    difficulty: str = "hard"
     verification: dict[str, Any] = field(default_factory=dict)
     hard_negative_ids: list[str] = field(default_factory=list)
     generation_model: str = ""

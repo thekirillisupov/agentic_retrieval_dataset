@@ -36,18 +36,39 @@ The generator and judge can be **different models** (a stronger judge reduces se
 
 ---
 
+## Two generation processes (split by config)
+
+There are two independently-switchable generators. Both emit the **same record
+format** (`question` + `gold_chunk_ids`) and share one `verify`/`finalize`/`negatives`
+tail, so you can run either or both and they merge into one dataset.
+
+| Generator | Config block | Unit of context | Gold (anchor) chunks |
+|---|---|---|---|
+| **#1 neighbour multi-hop** | `generate` | tight run of 2–4 *adjacent* chunks | always ≥ 2, minimised |
+| **#2 document simple/hard** | `docgen` | a *whole document* (split into spans if huge) | **no limit** — `simple` = 1 passage, `hard` = many across the doc |
+
+Toggle with `generate.enabled` / `docgen.enabled`. Each dataset item records its
+`profile` (`neighbor_multihop` / `doc_simple_hard`) and `difficulty` (`simple`/`hard`).
+
 ## Pipeline stages
 
 ```
 chunks.jsonl
-   │  windows    contiguous neighbour windows within a single document
-   ▼
-windows.jsonl
-   │  generate   LLM writes a multi-chunk question + claimed required chunks
+   ├─ generator #1 (generate.enabled) ────────────────────────────┐
+   │     windows    contiguous neighbour windows (2–4 chunks)      │
+   │       ▼                                                       │
+   │     windows.jsonl                                             │
+   │       ▼ generate    multi-chunk question (gold ≥ 2)           │
+   │                                                               ▼
+   ├─ generator #2 (docgen.enabled) ──────────────────────►  candidates.jsonl
+   │     docunits   whole-document units (spans for huge docs)     ▲
+   │       ▼                                                       │
+   │     docunits.jsonl                                            │
+   │       ▼ gen-docs    simple (1 passage) OR hard (many) ────────┘
    ▼
 candidates.jsonl
-   │  verify     judge#1 minimality (→ minimal gold) + judge#2 groundedness
-   ▼
+   │  verify     per-item policy: judge minimality (→ minimal gold) + groundedness
+   ▼              (simple items keep gold=1; hard/neighbour items are minimised to ≥2)
 verified.jsonl
    │  negatives  (optional) embed all chunks, attach hard negatives per question
    ▼
@@ -126,12 +147,18 @@ cp config.example.yaml config.yaml      # edit paths + llm
 python run_pipeline.py all --config config.yaml
 
 # or stage by stage (each resumable):
-python run_pipeline.py windows  --config config.yaml
+python run_pipeline.py windows  --config config.yaml   # generator #1
 python run_pipeline.py generate --config config.yaml
+python run_pipeline.py docunits --config config.yaml   # generator #2
+python run_pipeline.py gen-docs --config config.yaml
 python run_pipeline.py verify   --config config.yaml
-python run_pipeline.py negatives --config config.yaml   # optional
+python run_pipeline.py negatives --config config.yaml  # optional
 python run_pipeline.py stats    --config config.yaml
 ```
+
+`all` runs whichever generators are enabled in config. To produce **only** the
+simple/hard document dataset, set `generate.enabled: false` and `docgen.enabled: true`
+(or just run the four `docunits → gen-docs → verify → finalize` stages).
 
 **Dry run with no model/GPU** (uses the offline `mock` backend):
 ```bash
@@ -150,8 +177,10 @@ python run_pipeline.py all --config config.example.yaml --backend mock \
   "answer": "…",
   "gold_chunk_ids": ["doc_b.txt::1", "doc_b.txt::2"],
   "file_name": "doc_b.txt",
-  "question_type": "multi_hop | aggregation | comparison | condition",
+  "question_type": "factoid | multi_hop | aggregation | comparison | condition",
   "question_style": "simple_user | novice | expert | search_query",
+  "profile": "neighbor_multihop | doc_simple_hard",
+  "difficulty": "simple | hard",
   "num_gold": 2,
   "window_chunk_ids": ["doc_b.txt::1", "doc_b.txt::2", "doc_b.txt::3"],
   "hard_negative_ids": ["other::5", "…"],
