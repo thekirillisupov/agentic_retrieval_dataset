@@ -283,6 +283,75 @@ def test_collect_positives_adds_near_duplicates(tmp_path):
     assert expanded > 0   # at least one item gained a near-duplicate positive
 
 
+def test_index_ranks_exact_match_first(tmp_path):
+    from arqg.embeddings import make_embedder
+    from arqg.index import build_or_load_index
+    cfg = _cfg(tmp_path)
+    cfg.retrieve.backend = "mock"
+    store = ChunkStore(load_chunks(cfg.paths.chunks))
+    embedder = make_embedder(cfg.retrieve)
+    idx = asyncio.run(build_or_load_index(
+        cfg.retrieve, embedder, store, cfg.paths.chunks, str(tmp_path / "index")))
+    # a query identical to a passage must retrieve that passage at rank 1
+    target = store.get("doc_b.txt", 2)
+    q = asyncio.run(embedder.embed([target.raw_text], kind="query"))
+    hits = idx.search(q, top_k=3)[0]
+    assert hits[0][0] == target.id
+    # the cached index loads back without re-embedding
+    idx2 = asyncio.run(build_or_load_index(
+        cfg.retrieve, embedder, store, cfg.paths.chunks, str(tmp_path / "index")))
+    assert idx2.chunk_ids == idx.chunk_ids
+
+
+def test_loader_reads_document_id_and_title(tmp_path):
+    from arqg.schema import Chunk
+    p = tmp_path / "c.jsonl"
+    write_jsonl(str(p), [{"file_name": "f.txt", "index": 0, "raw_text": "текст",
+                          "document_id": "D1", "title": "Заголовок"}])
+    c = load_chunks(str(p))[0]
+    assert c.document_id == "D1" and c.title == "Заголовок" and c.id == "f.txt::0"
+
+
+def test_retrieve_fills_results_format(tmp_path):
+    from arqg.retrieve import retrieve as run_retrieve
+    cfg = _cfg(tmp_path)
+    cfg.retrieve.backend = "mock"
+    cfg.collect.top_k = 3
+    store = ChunkStore(load_chunks(cfg.paths.chunks))
+    # a request whose query is a real passage text -> that passage should appear
+    target = store.get("doc_a.txt", 1)
+    write_jsonl(cfg.paths.retrieval_requests,
+                [{"clue_id": "q__k0", "item_id": "q", "query": target.raw_text, "top_k": 3}])
+    asyncio.run(run_retrieve(cfg, store))
+    results = list(read_jsonl(cfg.paths.retrieval_results))
+    assert len(results) == 1
+    passages = results[0]["passages"]
+    assert 1 <= len(passages) <= 3
+    assert set(passages[0]) >= {"chunk_id", "document_id", "title", "file_name", "index", "score"}
+    assert any(p["chunk_id"] == target.id for p in passages)
+
+
+def test_full_auto_collect_with_retrieval(tmp_path):
+    """End-to-end: clues -> retrieve (mock index) -> collect-positives."""
+    from arqg.clues import make_clues
+    from arqg.retrieve import retrieve as run_retrieve
+    from arqg.collect import collect_positives
+    cfg = _cfg(tmp_path)
+    cfg.collect.enabled = True
+    cfg.retrieve.backend = "mock"
+    cfg.collect.judge.backend = "mock"
+    store = ChunkStore(load_chunks(cfg.paths.chunks))
+    _seed_verified(cfg, store)
+    asyncio.run(make_clues(cfg, make_client(cfg.llm), store))
+    asyncio.run(run_retrieve(cfg, store))
+    assert list(read_jsonl(cfg.paths.retrieval_results))   # retrieval produced results
+    asyncio.run(collect_positives(cfg, make_client(cfg.collect.judge), store))
+    items = list(read_jsonl(cfg.paths.collected))
+    assert items
+    for it in items:
+        assert set(it["gold_chunk_ids"]).issubset(set(it["positive_chunk_ids"]))
+
+
 def test_resume_is_idempotent(tmp_path):
     cfg = _cfg(tmp_path)
     store = ChunkStore(load_chunks(cfg.paths.chunks))

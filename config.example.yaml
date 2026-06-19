@@ -164,6 +164,29 @@ collect:
     max_tokens: 512
     max_concurrency: 16
 
+# Retrieval — embed the corpus, index it, fill the collect round automatically -
+# Corpus records may carry {raw_text, document_id, title, file_name, index}.
+# With retrieve.enabled, `all` runs clues -> retrieve -> collect-positives end to
+# end (no manual passage round). Disable to return passages yourself instead.
+retrieve:
+  enabled: true
+  backend: gigachat               # "gigachat" | "mock"
+  model: GigaEmbeddings-3B-2025-09
+  base_url: https://gigachat.devices.sberbank.ru/api/v1/embeddings
+  # Auth — provide ONE of:
+  token_env: GIGACHAT_TOKEN       # a static "Bearer" access token, OR
+  auth_key_env: GIGACHAT_AUTH_KEY # base64(client_id:secret) -> OAuth (auto-refreshed)
+  oauth_url: https://ngw.devices.sberbank.ru:9443/api/v2/oauth
+  scope: GIGACHAT_API_PERS
+  verify_ssl: true                # set false, or point ca_bundle at the Russian CA
+  ca_bundle: ""                   # e.g. russian_trusted_root_ca.pem
+  embed_with_title: true          # prepend each passage's title before embedding
+  batch_size: 32
+  max_concurrency: 8
+  top_k: 0                        # 0 = use collect.top_k
+  index_dir: ""                   # default <out_dir>/index ; cached & reused
+  rebuild_index: false
+
 # Hard-negative mining (optional; needs sentence-transformers + torch) ----------
 negatives:
   enabled: false

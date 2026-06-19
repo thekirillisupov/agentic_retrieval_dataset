@@ -24,6 +24,8 @@ class Chunk:
     file_name: str
     index: int
     raw_text: str
+    document_id: str = ""   # logical document the passage belongs to
+    title: str = ""         # document/passage title (used to enrich embeddings)
 
     @property
     def id(self) -> str:

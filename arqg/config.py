@@ -146,6 +146,35 @@ class CollectConfig:
 
 
 @dataclass
+class RetrieveConfig:
+    """Embedding index over the corpus + dense retrieval, used to fill the
+    collect-all-positives retrieval round automatically (no manual step)."""
+    enabled: bool = True
+    backend: str = "gigachat"      # "gigachat" | "mock"
+    model: str = "GigaEmbeddings-3B-2025-09"
+    base_url: str = "https://gigachat.devices.sberbank.ru/api/v1/embeddings"
+    # Auth: a static bearer token if you have one, else OAuth client-credentials.
+    token_env: str = "GIGACHAT_TOKEN"          # static "Bearer <token>"
+    oauth_url: str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
+    auth_key_env: str = "GIGACHAT_AUTH_KEY"    # base64(client_id:secret) for Basic auth
+    scope: str = "GIGACHAT_API_PERS"
+    verify_ssl: bool = True        # GigaChat needs the Russian Min-Digit CA; see README
+    ca_bundle: str = ""            # path to a CA bundle (.pem) if verify_ssl
+    # GigaEmbeddings is asymmetric: queries get an instruction prefix, passages don't.
+    query_instruction: str = (
+        "Instruct: Given a web search query, retrieve relevant passages "
+        "that answer the query\nQuery: ")
+    embed_with_title: bool = True  # prepend the passage title before embedding
+    batch_size: int = 32
+    max_concurrency: int = 8
+    request_timeout: float = 60.0
+    max_retries: int = 5
+    top_k: int = 0                 # 0 = use each request's top_k (= collect.top_k)
+    index_dir: str = ""            # default: <out_dir>/index ; embeddings are cached here
+    rebuild_index: bool = False    # force re-embedding the corpus
+
+
+@dataclass
 class NegativesConfig:
     enabled: bool = False
     embedding_model: str = "intfloat/multilingual-e5-large"
@@ -213,6 +242,7 @@ class Config:
     docgen: DocGenConfig = field(default_factory=DocGenConfig)
     verify: VerifyConfig = field(default_factory=VerifyConfig)
     collect: CollectConfig = field(default_factory=CollectConfig)
+    retrieve: RetrieveConfig = field(default_factory=RetrieveConfig)
     negatives: NegativesConfig = field(default_factory=NegativesConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     log_level: str = "INFO"

@@ -1,6 +1,8 @@
-# Core (generation + verification against any OpenAI-compatible API or vLLM)
+# Core (generation + verification against any OpenAI-compatible API or vLLM;
+# httpx also powers the GigaChat embeddings retriever, numpy the index)
 openai>=1.40.0
 httpx>=0.27.0
+numpy>=1.24
 PyYAML>=6.0
 
 # Optional: native Anthropic backend (llm.backend: anthropic)
@@ -8,7 +10,6 @@ PyYAML>=6.0
 
 # Optional: hard-negative mining (negatives.enabled: true)
 # sentence-transformers>=3.0.0
-# numpy>=1.24
 
 # Dev / tests
 pytest>=7.0

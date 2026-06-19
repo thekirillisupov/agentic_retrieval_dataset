@@ -70,10 +70,8 @@ candidates.jsonl
    │  verify     per-item policy: judge minimality (→ minimal gold) + groundedness
    ▼              (simple items keep gold=1; hard/neighbour items are minimised to ≥2)
 verified.jsonl
-   │  clues             decompose each question into atomic facts
-   │    └─► retrieval_requests.jsonl ──►  (YOU retrieve top-k per clue across the corpus)
-   │                                            │
-   │    retrieval_results.jsonl ◄───────────────┘  (YOU return passages — format below)
+   │  clues             decompose each question into atomic facts -> retrieval_requests.jsonl
+   │  retrieve          embed + index the corpus, top-k passages per clue -> retrieval_results.jsonl
    │  collect-positives  entailment-judge each passage; keep those that state the fact
    ▼
 collected.jsonl   (gold preserved + positive_chunk_ids / positive_groups added)
@@ -92,38 +90,43 @@ the one chunk we generated from is marked gold, a retriever that finds an equall
 valid duplicate gets unfairly penalised. This step fixes the labels:
 
 1. `clues` — each verified question is decomposed into **atomic clues** (self-contained
-   facts, one per hop). I write `retrieval_requests.jsonl`, one query per clue.
-2. **You** retrieve the top-k passages per clue over the whole corpus and return
-   `retrieval_results.jsonl` (I don't implement retrieval — just consume this format).
-3. `collect-positives` — an entailment judge checks each returned passage against the
+   facts, one per hop), written to `retrieval_requests.jsonl` (one query per clue).
+2. `retrieve` — the corpus is embedded once (GigaEmbeddings), indexed (cached on disk),
+   and the top-k passages per clue are written to `retrieval_results.jsonl`.
+3. `collect-positives` — an entailment judge checks each retrieved passage against the
    clue's fact; every passage that truly states it (plus the original gold) becomes a
    positive. Output keeps `gold_chunk_ids` and adds `positive_chunk_ids` (the full
    relevant set) and `positive_groups` (per-clue alternates — score a multi-hop hit as
    "≥1 chunk from each group").
 
-**Run it** (enable `collect:` in config; `all` pauses after `verify` to hand you the requests):
+With `collect.enabled` + `retrieve.enabled` (default), `all` runs steps 1–3 automatically:
 ```bash
-python run_pipeline.py all --config config.yaml      # ... stops, writes retrieval_requests.jsonl
-# -> you retrieve and write out/retrieval_results.jsonl
-python run_pipeline.py collect-positives --config config.yaml
-python run_pipeline.py finalize --config config.yaml
+export GIGACHAT_TOKEN=...            # or GIGACHAT_AUTH_KEY for OAuth (see below)
+python run_pipeline.py all --config config.yaml
 ```
 
-**`retrieval_requests.jsonl` — what I hand you** (one line per clue):
+**Corpus schema for retrieval** — records may carry the extra fields; `chunk_id` is
+still `"{file_name}::{index}"`, while `document_id`/`title` are kept as metadata and the
+title is (optionally) prepended before embedding:
 ```json
-{"clue_id": "w_ab12__c0__k0", "item_id": "w_ab12__c0", "query": "<fact to search the corpus for>", "top_k": 20}
+{"raw_text": "…", "document_id": "D123", "title": "…", "file_name": "doc_a.txt", "index": 3}
 ```
 
-**`retrieval_results.jsonl` — what you return** (one line per clue; `chunk_id` is
-`"{file_name}::{index}"` from the corpus — that's all I need, `raw_text` optional):
+**GigaChat embeddings** (`retrieve.backend: gigachat`, model `GigaEmbeddings-3B-2025-09`):
+provide auth via **either** a static token (`GIGACHAT_TOKEN`) **or** OAuth client
+credentials (`GIGACHAT_AUTH_KEY` = base64 `client_id:secret`; the token is fetched from
+`oauth_url` and auto-refreshed). GigaChat's TLS uses the Russian Trusted CA — set
+`verify_ssl: false` or point `ca_bundle` at the CA `.pem`. Queries are sent with the
+GigaEmbeddings instruction prefix, passages without it. The embedding matrix is cached
+under `index_dir` (default `<out_dir>/index`) and reused until the corpus or model changes.
+
+**Prefer to retrieve yourself?** Set `retrieve.enabled: false`; `all` then stops after
+`clues`, and you fill `retrieval_results.jsonl` by hand:
 ```json
-{"clue_id": "w_ab12__c0__k0", "passages": [
-  {"chunk_id": "doc_c.txt::9", "score": 0.81},
-  {"chunk_id": "doc_q.txt::2", "score": 0.77}
-]}
+{"clue_id": "w_ab12__c0__k0", "passages": [{"chunk_id": "doc_c.txt::9", "score": 0.81}]}
 ```
-Order doesn't matter and you may include the original gold chunk or not. Any `clue_id`
-with no entry (or empty `passages`) simply keeps its original gold as the only positive.
+Then run `collect-positives` and `finalize`. `chunk_id` (`"{file_name}::{index}"`) is all
+that's needed. Any `clue_id` with no entry keeps its original gold as the only positive.
 
 ---
 

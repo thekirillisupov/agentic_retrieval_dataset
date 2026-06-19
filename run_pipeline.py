@@ -9,7 +9,8 @@ Stages (each reads/writes JSONL and is independently resumable):
     gen-docs   LLM: generate simple (1 passage) & hard (many passages) questions
     verify     LLM judges: groundedness + minimality -> final gold set
     clues      decompose each question into atomic clues + retrieval requests
-    collect-positives  validate your returned passages -> expand positive set
+    retrieve   embed corpus, index it, retrieve top-k passages per clue
+    collect-positives  validate retrieved passages -> expand positive set
     negatives  (optional) mine hard negatives with an embedder
     finalize   assemble out/dataset.jsonl
     all        run the whole thing end to end
@@ -34,6 +35,7 @@ from arqg.generate import generate as run_generate
 from arqg.generate_docs import generate_docs as run_generate_docs
 from arqg.llm import make_client
 from arqg.negatives import mine_negatives
+from arqg.retrieve import retrieve as run_retrieve
 from arqg.utils import log, read_jsonl, setup_logging, write_jsonl
 from arqg.verify import verify as run_verify
 from arqg.windows import build_windows
@@ -88,6 +90,10 @@ async def cmd_clues(cfg: Config) -> None:
         await run_make_clues(cfg, llm, _store(cfg))
     finally:
         await llm.aclose()
+
+
+async def cmd_retrieve(cfg: Config) -> None:
+    await run_retrieve(cfg, _store(cfg))
 
 
 async def cmd_collect(cfg: Config) -> None:
@@ -159,21 +165,22 @@ async def cmd_all(cfg: Config) -> None:
         cmd_docunits(cfg)
         await cmd_gen_docs(cfg)
     await cmd_verify(cfg)
-    # collect-all-positives needs an external retrieval round, so `all` pauses
-    # here: it emits clues + retrieval requests and tells you how to resume.
     if cfg.collect.enabled:
         await cmd_clues(cfg)
-        log.warning(
-            "collect-all-positives is enabled. Next:\n"
-            "  1. retrieve top-%d passages per clue listed in %s\n"
-            "  2. save them as %s (see README for the format)\n"
-            "  3. run:  python run_pipeline.py collect-positives --config <cfg>\n"
-            "  4. then: python run_pipeline.py finalize --config <cfg>%s",
-            cfg.collect.top_k, cfg.paths.retrieval_requests, cfg.paths.retrieval_results,
-            "  (negatives run automatically inside finalize if enabled)"
-            if cfg.negatives.enabled else "")
-        cmd_stats(cfg)
-        return
+        if cfg.retrieve.enabled:
+            # automated retrieval: build the index and fill the collect round
+            await cmd_retrieve(cfg)
+            await cmd_collect(cfg)
+        else:
+            # manual round: emit requests and stop with resume instructions
+            log.warning(
+                "collect enabled, retrieve disabled. Next:\n"
+                "  1. retrieve top-%d passages per clue in %s\n"
+                "  2. save them as %s (see README format)\n"
+                "  3. run: collect-positives, then finalize",
+                cfg.collect.top_k, cfg.paths.retrieval_requests, cfg.paths.retrieval_results)
+            cmd_stats(cfg)
+            return
     if cfg.negatives.enabled:
         cmd_negatives(cfg)
     cmd_finalize(cfg)
@@ -184,7 +191,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Agentic-retrieval dataset pipeline")
     p.add_argument("stage", choices=[
         "windows", "generate", "docunits", "gen-docs", "verify",
-        "clues", "collect-positives", "negatives", "finalize", "stats", "all"])
+        "clues", "retrieve", "collect-positives", "negatives",
+        "finalize", "stats", "all"])
     p.add_argument("--config", default=None, help="path to YAML config")
     p.add_argument("--backend", default=None,
                    help="override LLM backend for generator AND judge (openai|gateway|anthropic|mock)")
@@ -197,6 +205,8 @@ def main() -> None:
         cfg.llm.backend = args.backend
         cfg.verify.judge.backend = args.backend
         cfg.collect.judge.backend = args.backend
+        if args.backend == "mock":   # offline dry run: embeddings too
+            cfg.retrieve.backend = "mock"
     if args.chunks:
         cfg.paths.chunks = args.chunks
     if args.out_dir:
@@ -213,6 +223,8 @@ def main() -> None:
         asyncio.run(cmd_gen_docs(cfg))
     elif args.stage == "clues":
         asyncio.run(cmd_clues(cfg))
+    elif args.stage == "retrieve":
+        asyncio.run(cmd_retrieve(cfg))
     elif args.stage == "collect-positives":
         asyncio.run(cmd_collect(cfg))
     elif args.stage == "verify":
