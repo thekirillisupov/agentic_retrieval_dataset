@@ -70,13 +70,60 @@ candidates.jsonl
    │  verify     per-item policy: judge minimality (→ minimal gold) + groundedness
    ▼              (simple items keep gold=1; hard/neighbour items are minimised to ≥2)
 verified.jsonl
-   │  negatives  (optional) embed all chunks, attach hard negatives per question
+   │  clues             decompose each question into atomic facts
+   │    └─► retrieval_requests.jsonl ──►  (YOU retrieve top-k per clue across the corpus)
+   │                                            │
+   │    retrieval_results.jsonl ◄───────────────┘  (YOU return passages — format below)
+   │  collect-positives  entailment-judge each passage; keep those that state the fact
    ▼
+collected.jsonl   (gold preserved + positive_chunk_ids / positive_groups added)
+   │  negatives  (optional) embed all chunks, attach hard negatives per question
+   ▼              (validated positives are excluded from negatives)
 dataset.jsonl   ← final
 ```
 
 Every stage reads/writes JSONL and is **independently resumable**: re-running a stage
 skips items already in its output file (crash-safe, append-only).
+
+### Collect-all-positives (final validation)
+
+The same fact often lives in several near-duplicate documents in a corpus. If only
+the one chunk we generated from is marked gold, a retriever that finds an equally
+valid duplicate gets unfairly penalised. This step fixes the labels:
+
+1. `clues` — each verified question is decomposed into **atomic clues** (self-contained
+   facts, one per hop). I write `retrieval_requests.jsonl`, one query per clue.
+2. **You** retrieve the top-k passages per clue over the whole corpus and return
+   `retrieval_results.jsonl` (I don't implement retrieval — just consume this format).
+3. `collect-positives` — an entailment judge checks each returned passage against the
+   clue's fact; every passage that truly states it (plus the original gold) becomes a
+   positive. Output keeps `gold_chunk_ids` and adds `positive_chunk_ids` (the full
+   relevant set) and `positive_groups` (per-clue alternates — score a multi-hop hit as
+   "≥1 chunk from each group").
+
+**Run it** (enable `collect:` in config; `all` pauses after `verify` to hand you the requests):
+```bash
+python run_pipeline.py all --config config.yaml      # ... stops, writes retrieval_requests.jsonl
+# -> you retrieve and write out/retrieval_results.jsonl
+python run_pipeline.py collect-positives --config config.yaml
+python run_pipeline.py finalize --config config.yaml
+```
+
+**`retrieval_requests.jsonl` — what I hand you** (one line per clue):
+```json
+{"clue_id": "w_ab12__c0__k0", "item_id": "w_ab12__c0", "query": "<fact to search the corpus for>", "top_k": 20}
+```
+
+**`retrieval_results.jsonl` — what you return** (one line per clue; `chunk_id` is
+`"{file_name}::{index}"` from the corpus — that's all I need, `raw_text` optional):
+```json
+{"clue_id": "w_ab12__c0__k0", "passages": [
+  {"chunk_id": "doc_c.txt::9", "score": 0.81},
+  {"chunk_id": "doc_q.txt::2", "score": 0.77}
+]}
+```
+Order doesn't matter and you may include the original gold chunk or not. Any `clue_id`
+with no entry (or empty `passages`) simply keeps its original gold as the only positive.
 
 ---
 
@@ -183,6 +230,9 @@ python run_pipeline.py all --config config.example.yaml --backend mock \
   "difficulty": "simple | hard",
   "num_gold": 2,
   "window_chunk_ids": ["doc_b.txt::1", "doc_b.txt::2", "doc_b.txt::3"],
+  "positive_chunk_ids": ["doc_b.txt::1", "doc_b.txt::2", "dup.txt::4"],
+  "positive_groups": [{"clue": "…", "chunk_ids": ["doc_b.txt::1", "dup.txt::4"]}],
+  "num_positives": 3,
   "hard_negative_ids": ["other::5", "…"],
   "verification": { "minimality": {...}, "groundedness": {...} },
   "generation_model": "…",
@@ -190,8 +240,10 @@ python run_pipeline.py all --config config.example.yaml --backend mock \
 }
 ```
 
-`gold_chunk_ids` is the **minimal verified** set. `window_chunk_ids` is the full context
-the question was generated from (a superset of gold). `chunk_id == "{file_name}::{index}"`.
+`gold_chunk_ids` is the **minimal verified** set. `positive_chunk_ids` (present after
+collect-all-positives) is the full set of acceptable relevant chunks incl. near-duplicate
+sources — score retrieval against this. `window_chunk_ids` is the full context the
+question was generated from (a superset of gold). `chunk_id == "{file_name}::{index}"`.
 
 ---
 

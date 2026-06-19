@@ -213,6 +213,76 @@ def test_verify_keeps_single_gold_when_policy_allows(tmp_path):
     assert len(items) == 1 and items[0]["num_gold"] == 1
 
 
+def _seed_verified(cfg, store):
+    """Run the neighbour pipeline up to verified.jsonl for collect tests."""
+    windows = build_windows(store, cfg.windows, cfg.filters)
+    write_jsonl(cfg.paths.windows, (w.to_dict() for w in windows))
+    asyncio.run(run_generate(cfg, make_client(cfg.llm)))
+    asyncio.run(run_verify(cfg, make_client(cfg.verify.judge), store))
+
+
+def test_clues_and_retrieval_requests(tmp_path):
+    from arqg.clues import make_clues
+    cfg = _cfg(tmp_path)
+    store = ChunkStore(load_chunks(cfg.paths.chunks))
+    _seed_verified(cfg, store)
+
+    asyncio.run(make_clues(cfg, make_client(cfg.llm), store))
+    clues = list(read_jsonl(cfg.paths.clues))
+    reqs = list(read_jsonl(cfg.paths.retrieval_requests))
+    assert clues and len(reqs) == len(clues)
+    # the request format I hand the user
+    r = reqs[0]
+    assert set(r) == {"clue_id", "item_id", "query", "top_k"}
+    assert r["top_k"] == cfg.collect.top_k
+    # each clue attributes to gold chunks of its item
+    items = {i["id"]: i for i in read_jsonl(cfg.paths.verified)}
+    for c in clues:
+        assert set(c["source_gold_ids"]).issubset(set(items[c["item_id"]]["gold_chunk_ids"]))
+
+
+def test_collect_positives_adds_near_duplicates(tmp_path):
+    from arqg.clues import make_clues
+    from arqg.collect import collect_positives
+    # corpus = sample + a near-duplicate of doc_a under a different file name
+    rows = list(read_jsonl(SAMPLE))
+    dup = [{**r, "file_name": "doc_a_DUP.txt"} for r in rows if r["file_name"] == "doc_a.txt"]
+    corpus = tmp_path / "corpus.jsonl"
+    write_jsonl(str(corpus), rows + dup)
+
+    cfg = _cfg(tmp_path)
+    cfg.paths.chunks = str(corpus)
+    cfg.collect.enabled = True
+    cfg.verify.judge.backend = cfg.collect.judge.backend = "mock"
+    store = ChunkStore(load_chunks(cfg.paths.chunks))
+    _seed_verified(cfg, store)
+    asyncio.run(make_clues(cfg, make_client(cfg.llm), store))
+
+    # simulate the user's retrieval: for each clue return the dup of its gold source
+    results = []
+    for c in read_jsonl(cfg.paths.clues):
+        passages = []
+        for gid in c["source_gold_ids"]:
+            fn, idx = gid.split("::")
+            if fn == "doc_a.txt":
+                passages.append({"chunk_id": f"doc_a_DUP.txt::{idx}", "score": 0.9})
+        results.append({"clue_id": c["clue_id"], "passages": passages})
+    write_jsonl(cfg.paths.retrieval_results, results)
+
+    asyncio.run(collect_positives(cfg, make_client(cfg.collect.judge), store))
+    items = list(read_jsonl(cfg.paths.collected))
+    assert items
+    expanded = 0
+    for it in items:
+        # gold is preserved and is a subset of positives
+        assert set(it["gold_chunk_ids"]).issubset(set(it["positive_chunk_ids"]))
+        assert it["num_positives"] == len(it["positive_chunk_ids"])
+        if any("doc_a.txt" in g for g in it["gold_chunk_ids"]):
+            assert any(p.startswith("doc_a_DUP.txt::") for p in it["positive_chunk_ids"])
+            expanded += 1
+    assert expanded > 0   # at least one item gained a near-duplicate positive
+
+
 def test_resume_is_idempotent(tmp_path):
     cfg = _cfg(tmp_path)
     store = ChunkStore(load_chunks(cfg.paths.chunks))

@@ -27,9 +27,10 @@ def mine_negatives(cfg: Config, store: ChunkStore) -> None:
             "pip install sentence-transformers numpy — required for negative mining"
         ) from e
 
-    items = [DatasetItem(**d) for d in read_jsonl(cfg.paths.verified)]
+    src = cfg.paths.items_source()   # collected (with positives) if present, else verified
+    items = [DatasetItem(**d) for d in read_jsonl(src)]
     if not items:
-        log.warning("negatives: no verified items found")
+        log.warning("negatives: no items found in %s", src)
         return
 
     ncfg = cfg.negatives
@@ -56,7 +57,9 @@ def mine_negatives(cfg: Config, store: ChunkStore) -> None:
     out = []
     over_fetch = ncfg.top_k + 64
     for i, it in enumerate(items):
-        excluded = set(it.gold_chunk_ids) | set(it.window_chunk_ids)
+        # never mine a validated positive (near-duplicate source) as a negative
+        excluded = (set(it.gold_chunk_ids) | set(it.window_chunk_ids)
+                    | set(it.positive_chunk_ids))
         row = sims[i]
         order = np.argsort(-row)[:over_fetch]
         negs: list[str] = []

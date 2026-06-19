@@ -143,6 +143,27 @@ verify:
     max_tokens: 1024
     max_concurrency: 16
 
+# Collect-all-positives (final validation; needs an external retrieval round) ---
+# When enabled, `all` stops after `verify`: it decomposes each question into
+# atomic clues and writes out/retrieval_requests.jsonl. You retrieve top_k
+# passages per clue across the whole corpus, save out/retrieval_results.jsonl
+# (see README for the format), then run:  collect-positives  ->  finalize.
+# An entailment judge keeps every passage that truly states the clue's fact, so
+# near-duplicate sources of the same fact are added to positive_chunk_ids.
+collect:
+  enabled: false
+  top_k: 20                      # passages you return per clue
+  require_original_gold: true    # original gold always counts as a positive
+  max_positives_per_clue: 0      # 0 = unlimited
+  judge:                         # entailment judge (clue generation uses `llm`)
+    backend: openai
+    model: Qwen/Qwen2.5-72B-Instruct
+    base_url: http://localhost:8000/v1
+    api_key_env: OPENAI_API_KEY
+    temperature: 0.0
+    max_tokens: 512
+    max_concurrency: 16
+
 # Hard-negative mining (optional; needs sentence-transformers + torch) ----------
 negatives:
   enabled: false

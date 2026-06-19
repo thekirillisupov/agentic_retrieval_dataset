@@ -105,8 +105,34 @@ class DatasetItem:
     difficulty: str = "hard"
     verification: dict[str, Any] = field(default_factory=dict)
     hard_negative_ids: list[str] = field(default_factory=list)
+    # collect-all-positives: every corpus chunk validated to satisfy a clue,
+    # so near-duplicate sources of the same fact count as relevant, not as
+    # false positives. positive_chunk_ids ⊇ gold_chunk_ids once collected.
+    positive_chunk_ids: list[str] = field(default_factory=list)
+    positive_groups: list[dict[str, Any]] = field(default_factory=list)
+    num_positives: int = 0
     generation_model: str = ""
     judge_model: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class Clue:
+    """An atomic, self-contained fact that the question requires. Used both as a
+    retrieval query (you return top-k passages for it) and as the entailment
+    target when validating which passages count as positives."""
+    clue_id: str
+    item_id: str
+    question: str
+    answer: str
+    clue: str
+    source_gold_ids: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def make_id(item_id: str, n: int) -> str:
+        return f"{item_id}__k{n}"

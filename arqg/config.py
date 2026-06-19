@@ -127,6 +127,25 @@ class VerifyConfig:
 
 
 @dataclass
+class CollectConfig:
+    """Collect-all-positives validation (the final step).
+
+    Each verified question is decomposed into atomic *clues*; you retrieve
+    top-k passages per clue across the whole corpus; an entailment judge then
+    keeps every passage that actually states the clue's fact. All such passages
+    (plus the original gold) become the question's positive set, so
+    near-duplicate sources are not mislabelled as negatives.
+    """
+    enabled: bool = False
+    top_k: int = 20                  # passages to retrieve per clue (spec for you)
+    require_original_gold: bool = True   # original gold always counts as positive
+    max_positives_per_clue: int = 0  # 0 = unlimited
+    # clue generation uses the main `llm`; entailment uses this judge (often a
+    # strong, cheap, deterministic model).
+    judge: "LLMConfig" = field(default_factory=lambda: LLMConfig(temperature=0.0))
+
+
+@dataclass
 class NegativesConfig:
     enabled: bool = False
     embedding_model: str = "intfloat/multilingual-e5-large"
@@ -158,8 +177,31 @@ class PathsConfig:
         return os.path.join(self.out_dir, "verified.jsonl")
 
     @property
+    def clues(self) -> str:
+        return os.path.join(self.out_dir, "clues.jsonl")
+
+    @property
+    def retrieval_requests(self) -> str:
+        # WHAT I GIVE YOU: one query per clue to retrieve top-k passages for.
+        return os.path.join(self.out_dir, "retrieval_requests.jsonl")
+
+    @property
+    def retrieval_results(self) -> str:
+        # WHAT YOU RETURN: top-k passages per clue (see README format).
+        return os.path.join(self.out_dir, "retrieval_results.jsonl")
+
+    @property
+    def collected(self) -> str:
+        return os.path.join(self.out_dir, "collected.jsonl")
+
+    @property
     def dataset(self) -> str:
         return os.path.join(self.out_dir, "dataset.jsonl")
+
+    def items_source(self) -> str:
+        """Most-downstream item file that exists: collected > verified.
+        Used by negatives/finalize so they pick up expanded positives."""
+        return self.collected if os.path.exists(self.collected) else self.verified
 
 
 @dataclass
@@ -170,6 +212,7 @@ class Config:
     generate: GenerateConfig = field(default_factory=GenerateConfig)
     docgen: DocGenConfig = field(default_factory=DocGenConfig)
     verify: VerifyConfig = field(default_factory=VerifyConfig)
+    collect: CollectConfig = field(default_factory=CollectConfig)
     negatives: NegativesConfig = field(default_factory=NegativesConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     log_level: str = "INFO"
@@ -200,7 +243,7 @@ class Config:
         return cls.from_dict(data)
 
     def _resolve_secrets(self) -> None:
-        for llm in (self.llm, self.verify.judge):
+        for llm in (self.llm, self.verify.judge, self.collect.judge):
             if not llm.api_key:
                 llm.api_key = os.environ.get(llm.api_key_env, "") or llm.default_dummy_key
             env_url = os.environ.get("ARQG_BASE_URL")

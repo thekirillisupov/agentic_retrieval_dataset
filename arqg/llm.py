@@ -245,6 +245,11 @@ def _default_mock(system: str, user: str) -> JsonObj:
     # (skip the literal "<id>" placeholder that appears in the instructions).
     ids = re.findall(r"\[CHUNK ([^\]]+?)\]", user)
     ids = [i for i in ids if "::" in i]
+    if '"supports"' in user:                 # clue-entailment judge
+        return {"supports": True, "notes": "mock"}
+    if '"clues"' in user:                    # clue decomposition
+        return {"clues": [{"clue": f"mock факт по {cid}", "source_gold_ids": [cid]}
+                          for cid in (ids or ["?::0"])]}
     if "necessary_chunk_ids" in user:        # minimality judge
         return {
             "necessary_chunk_ids": ids[:2],
