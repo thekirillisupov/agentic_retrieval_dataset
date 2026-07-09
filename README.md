@@ -151,6 +151,68 @@ One JSON object per line (`.jsonl`), a `.json` array, or a directory of either:
 
 ---
 
+## Third generator: MuSiQue → multi-hop dialogue
+
+`scripts/build_musique_dialogues.py` builds a **conversational, anaphora-heavy**
+retrieval set from [MuSiQue](https://huggingface.co/datasets/bdsaglam/musique)
+instead of a raw corpus. MuSiQue ships, for every multi-hop question, a
+`question_decomposition` — an ordered list of single-hop sub-questions where a
+later hop references an earlier hop's answer with a `#k` token (`k` = 1-based hop
+position), and every hop carries `paragraph_support_idx` (the one paragraph that
+answers it). That is exactly the material for a dialogue with anaphora:
+
+```
+turn 1: <client> asks q1                         <bot> answers a1
+turn 2: <client> asks q2, where "#1" is rewritten as a pronoun / definite
+        description referring to a1 (the bot already said it)   <bot> a2
+turn 3: ...
+```
+
+matching the app's dialogue format (`<client>…</client><bot>…</bot>…` ending on
+the client's latest message). A 3- or 4-hop question yields 3–4 turns.
+
+**One item per turn.** For turn `t` we emit a record whose `question` is the
+transcript so far (ending on the client's latest message), `answer` is hop `t`'s
+answer, and:
+
+> **Frozen gold rule:** `gold_chunk_ids` for turn `t` is **only hop `t`'s
+> supporting paragraph.** The bot has already uttered the earlier answers in the
+> transcript, so the earlier hops' documents are redundant to a downstream
+> consumer — hop `t`'s passage is the only thing "relevant to the latest
+> message". Gold comes straight from `paragraph_support_idx`, no LLM verify step.
+
+Each example's ~20 paragraphs (supporting **and** distractors) are written out as
+the retrieval corpus (`chunk_id = "{example_id}::{paragraph_idx}"`), so the gold
+ids point into a real pool with hard distractors for free.
+
+The `#k` → anaphora rewrite reuses the same LLM client as the rest of the
+pipeline (configure it via `--config`); `--anaphora heuristic` gives a
+deterministic, model-free rewrite, and `--backend mock` runs fully offline.
+
+```bash
+# LLM-rewritten anaphora, pulling MuSiQue (answerable subset) from the HF hub
+pip install datasets
+export OPENAI_API_KEY=sk-...
+python scripts/build_musique_dialogues.py --config config.yaml --out-dir out_mq
+
+# offline dry run (no network / GPU) on a local MuSiQue dump
+python scripts/build_musique_dialogues.py --backend mock \
+    --input data/musique_ans_v1.0_train.jsonl --limit 50 --out-dir out_demo
+```
+
+Output (`out_mq/`): `musique_corpus.jsonl` (retrieval pool) and
+`musique_dialogues.jsonl` (the dialogue items, **same schema as `dataset.jsonl`**
+below, with per-turn provenance under `verification.musique`). Useful flags:
+`--min-turn 2` (skip the standalone first hop), `--only-anaphora-turns` (keep only
+turns that actually reference an earlier answer), `--config-name default` (include
+unanswerable-derived examples; the builder still keeps only fully-supported ones).
+The output is a valid `DatasetItem` file, so you can point the optional
+`negatives` stage at it (`paths.chunks: out_mq/musique_corpus.jsonl`,
+`paths.index`/item source = `musique_dialogues.jsonl`) to mine hard negatives, or
+run `stats` on it.
+
+---
+
 ## Choosing the LLM: API vs vLLM (same code path)
 
 Generation and verification talk to an **OpenAI-compatible** endpoint, so the *only*

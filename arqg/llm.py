@@ -245,6 +245,11 @@ def _default_mock(system: str, user: str) -> JsonObj:
     # (skip the literal "<id>" placeholder that appears in the instructions).
     ids = re.findall(r"\[CHUNK ([^\]]+?)\]", user)
     ids = [i for i in ids if "::" in i]
+    if '"message"' in user:                  # musique anaphora rewrite
+        m = re.search(r"raw decomposed form, is:\s*\n\s*(.+)", user)
+        raw = m.group(1).strip() if m else ""
+        # deterministic offline stand-in: drop the #N back-references to "it"
+        return {"message": re.sub(r"#\d+", "it", raw)}
     if '"supports"' in user:                 # clue-entailment judge
         return {"supports": True, "notes": "mock"}
     if '"clues"' in user:                    # clue decomposition

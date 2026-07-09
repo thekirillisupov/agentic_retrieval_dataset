@@ -11,5 +11,9 @@ PyYAML>=6.0
 # Optional: hard-negative mining (negatives.enabled: true)
 # sentence-transformers>=3.0.0
 
+# Optional: pull MuSiQue from the HF hub for scripts/build_musique_dialogues.py
+# (not needed if you pass --input with a local musique dump)
+# datasets>=2.14.0
+
 # Dev / tests
 pytest>=7.0

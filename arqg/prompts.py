@@ -324,3 +324,44 @@ ENTAIL_TEMPLATE = """ФАКТ (подсказка):
 
 def entailment_user(clue: str, passage: str) -> str:
     return ENTAIL_TEMPLATE.format(clue=clue, passage=passage.strip())
+
+
+# --------------------------------------------------------------------------- #
+# MuSiQue -> dialogue: anaphora rewriting of a bridge hop question
+# --------------------------------------------------------------------------- #
+# A MuSiQue hop question references an earlier hop's answer with a "#k" token.
+# The earlier answer is already visible in the transcript (the bot said it), so
+# the follow-up must refer back to it with a pronoun or a definite description
+# instead of naming the entity — that is the conversational anaphora we want.
+# MuSiQue is an English dataset, so these prompts are in English to match.
+ANAPHORA_SYSTEM = (
+    "You turn multi-hop sub-questions into natural conversational follow-up "
+    "messages. A user is chatting with an assistant. An earlier answer is "
+    "already visible in the transcript, so the follow-up must refer back to it "
+    "with a pronoun or a short definite description (e.g. 'he', 'that city', "
+    "'this company') instead of repeating the entity by name. Reply only in JSON."
+)
+
+ANAPHORA_TEMPLATE = """Here is the conversation so far:
+
+{transcript}
+
+The user's next question, in raw decomposed form, is:
+    {raw_question}
+
+In this raw question, each #N placeholder stands for an answer the assistant ALREADY gave above:
+{ref_map}
+
+Rewrite the raw question as the user's next chat message. Requirements:
+1. Replace every #N placeholder with a natural anaphoric reference — a pronoun or a short definite description — to the corresponding earlier answer. Do NOT write the entity's name.
+2. Keep the rest of the question's meaning exactly; do not add or drop any constraint.
+3. Sound like a real person's short follow-up message, not an exam question.
+4. One sentence, in English.
+
+Return STRICT JSON and nothing else:
+{{"message": "<the rewritten user message>"}}"""
+
+
+def anaphora_user(transcript: str, raw_question: str, ref_map: str) -> str:
+    return ANAPHORA_TEMPLATE.format(
+        transcript=transcript, raw_question=raw_question, ref_map=ref_map)
