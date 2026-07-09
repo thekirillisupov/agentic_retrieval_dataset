@@ -32,6 +32,8 @@ def load_chunks(path: str) -> list[Chunk]:
                     file_name=str(rec["file_name"]),
                     index=int(rec["index"]),
                     raw_text=rec["raw_text"] if rec["raw_text"] is not None else "",
+                    document_id=str(rec.get("document_id", "") or ""),
+                    title=str(rec.get("title", "") or ""),
                 )
             )
         except (KeyError, TypeError, ValueError) as e:

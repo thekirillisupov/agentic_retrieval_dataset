@@ -40,21 +40,24 @@
 log_level: INFO
 
 paths:
-  index: data/ckr_index.jsonl   # corpus for windows/retrieval (preferred)
-  chunks: data/chunks.jsonl     # fallback if index is unset; {"file_name","index","raw_text"} per line
+  index: data/ckr_index.jsonl   # corpus for windows/retrieval ({"file_name","index","raw_text"} per line)
   out_dir: out
 
 # Generator LLM -----------------------------------------------------------------
 llm:
-  backend: openai
-  model: Qwen/Qwen2.5-72B-Instruct
-  base_url: http://localhost:8000/v1
-  api_key_env: OPENAI_API_KEY
-  temperature: 0.5              # a little diversity helps question variety
+  backend: gateway
+  base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+  cert_file: gigachat/published.pem
+  key_file: gigachat/00CA0001CLLMllm99usr.key
+  verify_ssl: false
+  temperature: 0.7
   max_tokens: 1536
-  max_concurrency: 16           # in-flight requests; raise for throughput
-  max_retries: 5
-  request_timeout: 120
+  max_concurrency: 4
+  extra_body:
+    top_p: 0.90
+    reasoning: false
+    chat_template_kwargs:
+      enable_thinking: false
 
 # Seed-chunk eligibility (junk chunks stay as neighbours, just never seed/gold) --
 filters:
@@ -72,11 +75,11 @@ windows:
   max_windows_per_file: 6       # keep large documents from dominating
   target_windows: 5000          # total windows to build (0 = all eligible)
   stride: 1
-  seed: 13
+  seed: 42
 
 # Generation process #1 — neighbour-window multi-hop questions ------------------
 generate:
-  enabled: true                  # set false to skip this generator entirely
+  enabled: false                  # set false to skip this generator entirely
   questions_per_window: 1
   require_multi_chunk: true
   min_gold_chunks: 2            # final dataset requires >= this many gold chunks
@@ -103,7 +106,7 @@ generate:
 #   set generate.enabled: false and docgen.enabled: true, then `all`,
 #   or run stages explicitly: docunits -> gen-docs -> verify -> finalize
 docgen:
-  enabled: false
+  enabled: true
   questions_per_unit: 1
   difficulty_weights:            # sampled per document unit
     simple: 0.5
@@ -116,13 +119,13 @@ docgen:
     novice: 0.20
     expert: 0.20
     search_query: 0.15
-  style_seed: 29
+  style_seed: 42
   units:
-    max_doc_chars: 30000         # huge documents are split into spans this big
+    max_doc_chars: 120000         # huge documents are split into spans this big
     max_doc_chunks: 40
     min_unit_chunks: 1
     max_units_per_file: 4
-    target_units: 2000           # total document units to build (0 = all)
+    target_units: 0           # total document units to build (0 = all)
     seed: 23
 
 # Verification (the quality gate) -----------------------------------------------
@@ -136,60 +139,50 @@ verify:
   # The judge can be a DIFFERENT (often stronger) model than the generator.
   # Using a separate model reduces self-bias and improves filtering quality.
   judge:
-    backend: openai
-    model: Qwen/Qwen2.5-72B-Instruct
-    base_url: http://localhost:8000/v1
-    api_key_env: OPENAI_API_KEY
-    temperature: 0.0           # deterministic judging
+    backend: gateway
+    base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+    cert_file: gigachat/published.pem
+    key_file: gigachat/00CA0001CLLMllm99usr.key
+    verify_ssl: false
+    temperature: 0.1           # deterministic judging
     max_tokens: 1024
     max_concurrency: 16
+    extra_body:
+      reasoning: false
+      chat_template_kwargs:
+        enable_thinking: false
 
-# Collect-all-positives (final validation; needs an external retrieval round) ---
-# When enabled, `all` stops after `verify`: it decomposes each question into
-# atomic clues and writes out/retrieval_requests.jsonl. You retrieve top_k
-# passages per clue across the whole corpus, save out/retrieval_results.jsonl
-# (see README for the format), then run:  collect-positives  ->  finalize.
-# An entailment judge keeps every passage that truly states the clue's fact, so
-# near-duplicate sources of the same fact are added to positive_chunk_ids.
+# Collect-all-positives — entailment judge over retrieved passages ---------------
 collect:
-  enabled: false
-  top_k: 20                      # passages you return per clue
-  require_original_gold: true    # original gold always counts as a positive
-  max_positives_per_clue: 0      # 0 = unlimited
-  judge:                         # entailment judge (clue generation uses `llm`)
-    backend: openai
-    model: Qwen/Qwen2.5-72B-Instruct
-    base_url: http://localhost:8000/v1
-    api_key_env: OPENAI_API_KEY
+  enabled: true
+  top_k: 20
+  judge:
+    backend: gateway
+    base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+    cert_file: gigachat/published.pem
+    key_file: gigachat/00CA0001CLLMllm99usr.key
+    verify_ssl: false
     temperature: 0.0
     max_tokens: 512
-    max_concurrency: 16
+    max_concurrency: 4
+    extra_body:
+      reasoning: false
+      chat_template_kwargs:
+        enable_thinking: false
 
-# Retrieval — embed the corpus, index it, fill the collect round automatically -
-# Corpus records may carry {raw_text, document_id, title, file_name, index}.
-# With retrieve.enabled, `all` runs clues -> retrieve -> collect-positives end to
-# end (no manual passage round). Disable to return passages yourself instead.
+# Retrieval — GigaChat embeddings (OAuth token refreshed every 10 min) -----------
 retrieve:
   enabled: true
-  backend: gigachat               # "gigachat" | "mock"
+  backend: gigachat
   model: GigaEmbeddings-3B-2025-09
-  base_url: https://gigachat.devices.sberbank.ru/api/v1/embeddings
-  # Auth — provide ONE of:
-  token_env: GIGACHAT_TOKEN       # a static "Bearer" access token, OR
-  auth_key_env: GIGACHAT_AUTH_KEY # base64(client_id:secret) -> OAuth Bearer (auto-refreshed)
-  oauth_url: https://ngw.devices.sberbank.ru:9443/api/v2/oauth
-  scope: GIGACHAT_API_PERS
-  oauth_refresh_interval: 600     # re-fetch token every N seconds (0 = expiry only)
-  verify_ssl: true                # set false, or point ca_bundle at the Russian CA
-  ca_bundle: ""                   # e.g. russian_trusted_root_ca.pem
-  embed_with_title: true          # prepend each passage's title before embedding
-  batch_size: 32
-  max_input_chars: 8192           # truncate if a single passage exceeds API limits
-  max_concurrency: 8
-  min_request_interval: 0         # min seconds between embedding API calls (e.g. 1.0)
-  top_k: 0                        # 0 = use collect.top_k
-  index_dir: ""                   # default <out_dir>/index ; cached & reused
-  rebuild_index: false
+  auth_key_env: GIGACHAT_AUTH_KEY
+  scope: GIGACHAT_API_CORP
+  verify_ssl: false
+  oauth_refresh_interval: 600
+  batch_size: 8
+  max_input_chars: 8192
+  max_concurrency: 2
+  min_request_interval: 1.0
 
 # Hard-negative mining (optional; needs sentence-transformers + torch) ----------
 negatives:

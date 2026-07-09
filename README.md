@@ -70,13 +70,63 @@ candidates.jsonl
    │  verify     per-item policy: judge minimality (→ minimal gold) + groundedness
    ▼              (simple items keep gold=1; hard/neighbour items are minimised to ≥2)
 verified.jsonl
-   │  negatives  (optional) embed all chunks, attach hard negatives per question
+   │  clues             decompose each question into atomic facts -> retrieval_requests.jsonl
+   │  retrieve          embed + index the corpus, top-k passages per clue -> retrieval_results.jsonl
+   │  collect-positives  entailment-judge each passage; keep those that state the fact
    ▼
+collected.jsonl   (gold preserved + positive_chunk_ids / positive_groups added)
+   │  negatives  (optional) embed all chunks, attach hard negatives per question
+   ▼              (validated positives are excluded from negatives)
 dataset.jsonl   ← final
 ```
 
 Every stage reads/writes JSONL and is **independently resumable**: re-running a stage
 skips items already in its output file (crash-safe, append-only).
+
+### Collect-all-positives (final validation)
+
+The same fact often lives in several near-duplicate documents in a corpus. If only
+the one chunk we generated from is marked gold, a retriever that finds an equally
+valid duplicate gets unfairly penalised. This step fixes the labels:
+
+1. `clues` — each verified question is decomposed into **atomic clues** (self-contained
+   facts, one per hop), written to `retrieval_requests.jsonl` (one query per clue).
+2. `retrieve` — the corpus is embedded once (GigaEmbeddings), indexed (cached on disk),
+   and the top-k passages per clue are written to `retrieval_results.jsonl`.
+3. `collect-positives` — an entailment judge checks each retrieved passage against the
+   clue's fact; every passage that truly states it (plus the original gold) becomes a
+   positive. Output keeps `gold_chunk_ids` and adds `positive_chunk_ids` (the full
+   relevant set) and `positive_groups` (per-clue alternates — score a multi-hop hit as
+   "≥1 chunk from each group").
+
+With `collect.enabled` + `retrieve.enabled` (default), `all` runs steps 1–3 automatically:
+```bash
+export GIGACHAT_TOKEN=...            # or GIGACHAT_AUTH_KEY for OAuth (see below)
+python run_pipeline.py all --config config.yaml
+```
+
+**Corpus schema for retrieval** — records may carry the extra fields; `chunk_id` is
+still `"{file_name}::{index}"`, while `document_id`/`title` are kept as metadata and the
+title is (optionally) prepended before embedding:
+```json
+{"raw_text": "…", "document_id": "D123", "title": "…", "file_name": "doc_a.txt", "index": 3}
+```
+
+**GigaChat embeddings** (`retrieve.backend: gigachat`, model `GigaEmbeddings-3B-2025-09`):
+provide auth via **either** a static token (`GIGACHAT_TOKEN`) **or** OAuth client
+credentials (`GIGACHAT_AUTH_KEY` = base64 `client_id:secret`; the token is fetched from
+`oauth_url` and auto-refreshed). GigaChat's TLS uses the Russian Trusted CA — set
+`verify_ssl: false` or point `ca_bundle` at the CA `.pem`. Queries are sent with the
+GigaEmbeddings instruction prefix, passages without it. The embedding matrix is cached
+under `index_dir` (default `<out_dir>/index`) and reused until the corpus or model changes.
+
+**Prefer to retrieve yourself?** Set `retrieve.enabled: false`; `all` then stops after
+`clues`, and you fill `retrieval_results.jsonl` by hand:
+```json
+{"clue_id": "w_ab12__c0__k0", "passages": [{"chunk_id": "doc_c.txt::9", "score": 0.81}]}
+```
+Then run `collect-positives` and `finalize`. `chunk_id` (`"{file_name}::{index}"`) is all
+that's needed. Any `clue_id` with no entry keeps its original gold as the only positive.
 
 ---
 
@@ -183,6 +233,9 @@ python run_pipeline.py all --config config.example.yaml --backend mock \
   "difficulty": "simple | hard",
   "num_gold": 2,
   "window_chunk_ids": ["doc_b.txt::1", "doc_b.txt::2", "doc_b.txt::3"],
+  "positive_chunk_ids": ["doc_b.txt::1", "doc_b.txt::2", "dup.txt::4"],
+  "positive_groups": [{"clue": "…", "chunk_ids": ["doc_b.txt::1", "dup.txt::4"]}],
+  "num_positives": 3,
   "hard_negative_ids": ["other::5", "…"],
   "verification": { "minimality": {...}, "groundedness": {...} },
   "generation_model": "…",
@@ -190,8 +243,10 @@ python run_pipeline.py all --config config.example.yaml --backend mock \
 }
 ```
 
-`gold_chunk_ids` is the **minimal verified** set. `window_chunk_ids` is the full context
-the question was generated from (a superset of gold). `chunk_id == "{file_name}::{index}"`.
+`gold_chunk_ids` is the **minimal verified** set. `positive_chunk_ids` (present after
+collect-all-positives) is the full set of acceptable relevant chunks incl. near-duplicate
+sources — score retrieval against this. `window_chunk_ids` is the full context the
+question was generated from (a superset of gold). `chunk_id == "{file_name}::{index}"`.
 
 ---
 
