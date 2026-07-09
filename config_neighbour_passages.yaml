@@ -1,0 +1,108 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Agentic-retrieval dataset pipeline — example configuration
+#
+# Two supported setups for the generator/judge LLM. Both use the SAME settings
+# block; only base_url / model / api key differ:
+#
+#  (A) HOSTED API you already have (OpenAI-compatible — OpenAI, Together, DeepSeek,
+#      OpenRouter, Mistral, a corporate gateway, etc.):
+#        backend: openai
+#        base_url: https://api.your-provider.com/v1
+#        model:    <provider model id>
+#        api_key_env: OPENAI_API_KEY          # export the key in this env var
+#
+#  (B) SELF-HOSTED vLLM (you run it separately — see scripts/serve_vllm.sh):
+#        backend: openai                      # vLLM speaks the OpenAI API
+#        base_url: http://localhost:8000/v1
+#        model:    Qwen/Qwen2.5-72B-Instruct  # must match what vLLM is serving
+#        api_key_env: OPENAI_API_KEY          # any value; vLLM ignores it
+#
+#  (C) Native Anthropic:
+#        backend: anthropic
+#        model:   <anthropic model id>
+#        api_key_env: ANTHROPIC_API_KEY
+#
+#  (D) Corporate gateway (mTLS curl-style — NOT OpenAI SDK):
+#        backend: gateway
+#        base_url: https://sm.apps.example.ru/qwen_35   # full POST URL
+#        cert_file: published.pem
+#        key_file:  client.key
+#        verify_ssl: false
+#        temperature: 0.1
+#        max_tokens: 1536
+#        extra_body:
+#          top_p: 0.95
+#          reasoning: false
+#          chat_template_kwargs:
+#            enable_thinking: false
+# ─────────────────────────────────────────────────────────────────────────────
+
+log_level: INFO
+
+paths:
+  index: data/ckr_index.jsonl   # corpus for windows/retrieval ({"file_name","index","raw_text"} per line)
+  out_dir: out
+
+# Generator LLM -----------------------------------------------------------------
+llm:
+  backend: gateway
+  base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+  cert_file: gigachat/published.pem
+  key_file: gigachat/00CA0001CLLMllm99usr.key
+  verify_ssl: false
+  temperature: 0.7
+  max_tokens: 1536
+  max_concurrency: 4
+  extra_body:
+    top_p: 0.90
+    reasoning: false
+    chat_template_kwargs:
+      enable_thinking: false
+
+verify:
+  judge:
+    backend: gateway
+    base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+    cert_file: gigachat/published.pem
+    key_file: gigachat/00CA0001CLLMllm99usr.key
+    verify_ssl: false
+    temperature: 0.1
+    max_tokens: 1536
+    extra_body:
+      top_p: 0.95
+      reasoning: false
+      chat_template_kwargs:
+        enable_thinking: false
+
+# Seed-chunk eligibility (junk chunks stay as neighbours, just never seed/gold) --
+filters:
+  min_chars: 200
+  max_chars: 4000
+  min_words: 25
+  min_alpha_ratio: 0.5
+  min_cyrillic_ratio: 0.3
+
+# Neighbour windows -------------------------------------------------------------
+windows:
+  window_sizes: [2, 3, 4, 5]
+  window_size_weights: [0.45, 0.30, 0.15, 0.10]
+  max_window_chars: 12000
+  max_windows_per_file: 6       # keep large documents from dominating
+  target_windows: 20000          # total windows to build (0 = all eligible)
+  stride: 1
+  seed: 42
+
+# Generation --------------------------------------------------------------------
+generate:
+  questions_per_window: 1
+  require_multi_chunk: true
+  min_gold_chunks: 2            # final dataset requires >= this many gold chunks
+
+# Hard-negative mining (optional; needs sentence-transformers + torch) ----------
+negatives:
+  enabled: false
+  embedding_model: intfloat/multilingual-e5-large
+  top_k: 5
+  exclude_same_file: false
+  device: cpu                  # set to "cuda" if a GPU is available
+  batch_size: 64

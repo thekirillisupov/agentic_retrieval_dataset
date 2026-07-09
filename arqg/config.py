@@ -156,8 +156,9 @@ class RetrieveConfig:
     # Auth: a static bearer token if you have one, else OAuth client-credentials.
     token_env: str = "GIGACHAT_TOKEN"          # static "Bearer <token>"
     oauth_url: str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
-    auth_key_env: str = "GIGACHAT_AUTH_KEY"    # base64(client_id:secret) for Basic auth
+    auth_key_env: str = "GIGACHAT_AUTH_KEY"    # base64(client_id:secret) for OAuth Bearer
     scope: str = "GIGACHAT_API_PERS"
+    oauth_refresh_interval: float = 600.0      # re-fetch OAuth token every N seconds (0 = expiry only)
     verify_ssl: bool = True        # GigaChat needs the Russian Min-Digit CA; see README
     ca_bundle: str = ""            # path to a CA bundle (.pem) if verify_ssl
     # GigaEmbeddings is asymmetric: queries get an instruction prefix, passages don't.
@@ -166,7 +167,9 @@ class RetrieveConfig:
         "that answer the query\nQuery: ")
     embed_with_title: bool = True  # prepend the passage title before embedding
     batch_size: int = 32
+    max_input_chars: int = 8192    # truncate a single passage if the API rejects it (0 = off)
     max_concurrency: int = 8
+    min_request_interval: float = 0.0   # min seconds between embedding API calls (0 = off)
     request_timeout: float = 60.0
     max_retries: int = 5
     top_k: int = 0                 # 0 = use each request's top_k (= collect.top_k)
@@ -187,7 +190,13 @@ class NegativesConfig:
 @dataclass
 class PathsConfig:
     chunks: str = "data/chunks.jsonl"
+    index: str = ""                # corpus override; when set, used instead of chunks
     out_dir: str = "out"
+
+    @property
+    def corpus(self) -> str:
+        """Chunked corpus for windows, embedding index, and retrieval."""
+        return self.index or self.chunks
 
     @property
     def windows(self) -> str:

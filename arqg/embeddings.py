@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import random
 import time
 import uuid
 
@@ -96,24 +97,77 @@ class GigaChatEmbedder(BaseEmbedder):
         self._static_token = os.environ.get(cfg.token_env, "").strip()
         self._oauth_token = ""
         self._oauth_exp = 0.0
+        self._oauth_fetched_at = 0.0
         self._auth_lock = asyncio.Lock()
+        self._refresh_task: asyncio.Task[None] | None = None
+        self._rate_lock = asyncio.Lock()
+        self._last_request_at = 0.0
 
-    async def _token(self) -> str:
-        if self._static_token:
-            return self._static_token
-        # OAuth client-credentials with refresh ~30s before expiry
+    async def _throttle(self) -> None:
+        interval = self.cfg.min_request_interval
+        if interval <= 0:
+            return
+        async with self._rate_lock:
+            wait = interval - (time.time() - self._last_request_at)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_request_at = time.time()
+
+    def _retry_delay(self, resp: object | None, attempt: int) -> float:
+        status = getattr(resp, "status_code", None)
+        if status == 429:
+            headers = getattr(resp, "headers", {})
+            ra = headers.get("Retry-After") if headers else None
+            if ra:
+                try:
+                    return max(float(ra), 1.0) + random.uniform(0, 1)
+                except ValueError:
+                    pass
+            return min(60.0, 5.0 * (2 ** attempt)) + random.uniform(0, 1)
+        return min(2 ** attempt, 30) + random.uniform(0, 1)
+
+    async def _ensure_refresh_task(self) -> None:
+        if self._static_token or self._refresh_task is not None:
+            return
+        interval = self.cfg.oauth_refresh_interval
+        if interval <= 0:
+            return
+        self._refresh_task = asyncio.create_task(self._oauth_refresh_loop())
+
+    async def _oauth_refresh_loop(self) -> None:
+        interval = self.cfg.oauth_refresh_interval
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self._fetch_oauth_token(force=True)
+                log.debug("gigachat oauth token refreshed (every %.0fs)", interval)
+            except Exception as e:  # noqa: BLE001
+                log.warning("gigachat oauth refresh failed: %s", e)
+
+    def _oauth_still_valid(self) -> bool:
+        if not self._oauth_token:
+            return False
+        now = time.time()
+        if now >= self._oauth_exp - 30:
+            return False
+        interval = self.cfg.oauth_refresh_interval
+        if interval > 0 and now - self._oauth_fetched_at >= interval:
+            return False
+        return True
+
+    async def _fetch_oauth_token(self, *, force: bool = False) -> str:
         async with self._auth_lock:
-            if self._oauth_token and time.time() < self._oauth_exp - 30:
+            if not force and self._oauth_still_valid():
                 return self._oauth_token
             auth_key = os.environ.get(self.cfg.auth_key_env, "").strip()
             if not auth_key:
                 raise EmbeddingsError(
                     f"no token: set ${self.cfg.token_env} (static) or "
-                    f"${self.cfg.auth_key_env} (OAuth Basic key)")
+                    f"${self.cfg.auth_key_env} (OAuth client key)")
             resp = await self._client.post(
                 self.cfg.oauth_url,
                 headers={
-                    "Authorization": f"Basic {auth_key}",
+                    "Authorization": f"Bearer {auth_key}",
                     "RqUID": str(uuid.uuid4()),
                     "Content-Type": "application/x-www-form-urlencoded",
                 },
@@ -124,13 +178,38 @@ class GigaChatEmbedder(BaseEmbedder):
             self._oauth_token = data["access_token"]
             # expires_at is epoch milliseconds
             self._oauth_exp = float(data.get("expires_at", 0)) / 1000.0 or (time.time() + 1500)
+            self._oauth_fetched_at = time.time()
             return self._oauth_token
+
+    async def _token(self) -> str:
+        if self._static_token:
+            return self._static_token
+        await self._ensure_refresh_task()
+        return await self._fetch_oauth_token()
+
+    async def _embed_batch_split(self, inputs: list[str]) -> list[list[float]]:
+        if len(inputs) == 1:
+            text = inputs[0]
+            limit = self.cfg.max_input_chars
+            if limit > 0 and len(text) > limit:
+                log.warning("embeddings 413: truncating passage %d -> %d chars",
+                            len(text), limit)
+                return await self._embed_batch([text[:limit]])
+            raise EmbeddingsError(
+                f"single input too large ({len(text)} chars) and max_input_chars=0")
+        mid = len(inputs) // 2
+        log.warning("embeddings 413: splitting batch of %d items", len(inputs))
+        left = await self._embed_batch(inputs[:mid])
+        right = await self._embed_batch(inputs[mid:])
+        return left + right
 
     async def _embed_batch(self, inputs: list[str]) -> list[list[float]]:
         last: Exception | None = None
         for attempt in range(self.cfg.max_retries):
+            resp = None
             try:
                 token = await self._token()
+                await self._throttle()
                 resp = await self._client.post(
                     self.cfg.base_url,
                     headers={"Authorization": f"Bearer {token}",
@@ -138,21 +217,35 @@ class GigaChatEmbedder(BaseEmbedder):
                     json={"model": self.cfg.model, "input": inputs},
                 )
                 if resp.status_code == 401 and not self._static_token:
-                    self._oauth_token = ""        # force refresh and retry
+                    self._oauth_token = ""
+                    self._oauth_fetched_at = 0.0
                     raise EmbeddingsError("401 unauthorized — refreshing token")
+                if resp.status_code == 429:
+                    delay = self._retry_delay(resp, attempt)
+                    log.warning("embeddings rate-limited (429) — retry in %.1fs", delay)
+                    await asyncio.sleep(delay)
+                    continue
+                if resp.status_code == 413:
+                    return await self._embed_batch_split(inputs)
                 resp.raise_for_status()
                 data = resp.json()["data"]
                 data = sorted(data, key=lambda d: d.get("index", 0))
                 return [d["embedding"] for d in data]
             except Exception as e:  # noqa: BLE001
                 last = e
-                delay = min(2 ** attempt, 30)
-                log.warning("embeddings call failed (%d/%d): %s — retry in %ds",
+                delay = self._retry_delay(resp, attempt)
+                log.warning("embeddings call failed (%d/%d): %s — retry in %.1fs",
                             attempt + 1, self.cfg.max_retries, e, delay)
                 await asyncio.sleep(delay)
         raise EmbeddingsError(f"embeddings failed after {self.cfg.max_retries} tries: {last}")
 
     async def aclose(self) -> None:
+        if self._refresh_task is not None:
+            self._refresh_task.cancel()
+            try:
+                await self._refresh_task
+            except asyncio.CancelledError:
+                pass
         await self._client.aclose()
 
 

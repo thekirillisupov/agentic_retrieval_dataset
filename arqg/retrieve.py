@@ -35,7 +35,7 @@ async def retrieve(cfg: Config, store: ChunkStore) -> None:
     embedder = make_embedder(cfg.retrieve)
     try:
         idx = await build_or_load_index(
-            cfg.retrieve, embedder, store, cfg.paths.chunks, _index_dir(cfg))
+            cfg.retrieve, embedder, store, cfg.paths.corpus, _index_dir(cfg))
 
         queries = [r.get("query", "") for r in todo]
         q_vecs = await embedder.embed(queries, kind="query")

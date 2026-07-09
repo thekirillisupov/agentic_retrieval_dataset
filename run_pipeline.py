@@ -42,7 +42,7 @@ from arqg.windows import build_windows
 
 
 def _store(cfg: Config) -> ChunkStore:
-    return ChunkStore(load_chunks(cfg.paths.chunks))
+    return ChunkStore(load_chunks(cfg.paths.corpus))
 
 
 def cmd_windows(cfg: Config) -> None:
@@ -196,7 +196,8 @@ def main() -> None:
     p.add_argument("--config", default=None, help="path to YAML config")
     p.add_argument("--backend", default=None,
                    help="override LLM backend for generator AND judge (openai|gateway|anthropic|mock)")
-    p.add_argument("--chunks", default=None, help="override path to chunks file/dir")
+    p.add_argument("--chunks", default=None, help="override path to corpus chunks file/dir")
+    p.add_argument("--index", default=None, help="override corpus index file/dir (preferred over --chunks)")
     p.add_argument("--out-dir", default=None, help="override output directory")
     args = p.parse_args()
 
@@ -209,6 +210,8 @@ def main() -> None:
             cfg.retrieve.backend = "mock"
     if args.chunks:
         cfg.paths.chunks = args.chunks
+    if args.index:
+        cfg.paths.index = args.index
     if args.out_dir:
         cfg.paths.out_dir = args.out_dir
     setup_logging(cfg.log_level)
