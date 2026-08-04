@@ -12,7 +12,7 @@ Stages (each reads/writes JSONL and resumes independently):
     density    §7.1 τ_sim, corpus density norm, per-task injection budget
     distract   S6  distractor cascade + injection, v0 -> v1
     isolate    S7  cross-task isolation on the post-injection index
-    export     S8  final pool, SFT/RL/holdout splits, datamix stats
+    export     S8  final pool, train/holdout split, datamix stats
     all            everything, in order
     stats          re-print the last stats.json
 

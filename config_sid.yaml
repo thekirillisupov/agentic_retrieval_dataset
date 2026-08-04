@@ -129,9 +129,9 @@ isolation:
   judge_alternative_paths: true
 
 # --- S8 --------------------------------------------------------------------
+# train / holdout only; the SFT/RL split waits for a trainer to split it for
 export:
   holdout_size: 300
-  rl_fraction: 0.5
   dedup_threshold: 0.8
   fused_gap_bins:
     low: 0.33

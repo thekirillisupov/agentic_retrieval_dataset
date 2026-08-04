@@ -3,9 +3,16 @@
 Teacher-trajectory collection (plan §9.1) needs the RL harness — four tools, the
 `<state>` format, the per-episode doc_id remapping — and is deliberately out of
 this pipeline. What is here is everything the harness would consume: the frozen
-task pool on a pinned index version, the SFT/RL/holdout split with MinHash
-de-duplication across them, and the coverage/difficulty statistics the datamix
-is balanced on (§9.3).
+task pool on a pinned index version, a train/holdout split with MinHash
+de-duplication, and the coverage/difficulty statistics the datamix is balanced
+on (§9.3).
+
+The plan's SFT/RL split (§9.4) is **not** made here. It divides the pool by what
+each half will be *used for*, and nothing in this pipeline collects
+trajectories, so the boundary would be drawn on no evidence — and drawing it
+early costs tasks: enforcing disjoint gold sets across the boundary discards
+whichever side loses the overlap. The pool stays whole; split it when there is a
+trainer to split it for.
 
 Two things the plan is emphatic about and that are implemented here:
 
@@ -111,9 +118,13 @@ def finalize_record(cfg: SidConfig, rec: dict) -> dict:
 
 
 def split_pool(cfg: SidConfig, tasks: list[dict]) -> dict[str, list[dict]]:
-    """Holdout is stratified over mechanic × difficulty with a deliberate tilt
-    into the hard tail; SFT and RL then split the remainder with disjoint
-    questions *and* disjoint gold sets (§9.4)."""
+    """Train / holdout only.
+
+    Holdout is stratified over mechanic × difficulty with a deliberate tilt into
+    the hard tail, and its distractors are already in the same index — injection
+    happens before the split, so holdout cannot end up in a systematically
+    sparser neighbourhood than train and thereby artificially easy (§9.5).
+    """
     rng = random.Random(cfg.export.seed)
     pool = list(tasks)
     rng.shuffle(pool)
@@ -138,15 +149,15 @@ def split_pool(cfg: SidConfig, tasks: list[dict]) -> dict[str, list[dict]]:
             break
 
     holdout_ids = {t["task_id"] for t in holdout}
-    rest = [t for t in pool if t["task_id"] not in holdout_ids]
-
-    n_rl = int(len(rest) * cfg.export.rl_fraction)
-    rl, sft = rest[:n_rl], rest[n_rl:]
-    # gold-set overlap between the RL and SFT pools would leak the same
-    # retrieval targets across the boundary
-    rl_gold = {c for t in rl for c in t["gold_chunk_ids"]}
-    sft = [t for t in sft if not (set(t["gold_chunk_ids"]) & rl_gold)]
-    return {"holdout": holdout, "rl": rl, "sft": sft}
+    train = [t for t in pool if t["task_id"] not in holdout_ids]
+    # a train task sharing gold with a holdout task would leak the evaluation
+    # targets, which is the one boundary worth enforcing at this stage
+    holdout_gold = {c for t in holdout for c in t["gold_chunk_ids"]}
+    leaked = [t for t in train if set(t["gold_chunk_ids"]) & holdout_gold]
+    if leaked:
+        log.info("S8: %d train tasks share gold with holdout — dropped", len(leaked))
+        train = [t for t in train if not (set(t["gold_chunk_ids"]) & holdout_gold)]
+    return {"train": train, "holdout": holdout}
 
 
 def datamix_stats(tasks: list[dict]) -> dict[str, Any]:

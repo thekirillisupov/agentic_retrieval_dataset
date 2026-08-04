@@ -18,7 +18,7 @@ Stage map (plan §1 → module):
         distractors.py  transplant → perturb → generate cascade
         inject.py       v0 → vN additive injection
     S7  isolation.py    cross-task isolation on the post-injection index
-    S8  export.py       final tasks, splits, datamix stats
+    S8  export.py       final tasks, train/holdout split, datamix stats
 
 Teacher trajectories (plan §9.1) need the RL harness and are out of scope here;
 `export.py` produces the task pool they would be collected on.

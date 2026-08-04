@@ -361,7 +361,7 @@ def test_stats_demand_group_granularity_when_groups_are_not_singletons():
     assert grouped["gold"]["ndcg_granularity"] == "fact_group"
 
 
-def test_split_keeps_rl_and_sft_gold_disjoint():
+def test_split_is_train_holdout_with_no_gold_leak():
     cfg = SidConfig()
     cfg.export.holdout_size = 2
     tasks = [{"task_id": f"t{i}",
@@ -371,10 +371,13 @@ def test_split_keeps_rl_and_sft_gold_disjoint():
               "gold_chunk_ids": [f"c{i}", "shared" if i % 2 else f"x{i}"],
               "fact_groups": [[f"c{i}"]], "distractors": {}} for i in range(12)]
     splits = split_pool(cfg, tasks)
-    rl_gold = {c for t in splits["rl"] for c in t["gold_chunk_ids"]}
-    sft_gold = {c for t in splits["sft"] for c in t["gold_chunk_ids"]}
-    assert not (rl_gold & sft_gold)
-    assert len(splits["holdout"]) > 0
+    assert set(splits) == {"train", "holdout"}        # no SFT/RL boundary here
+    assert len(splits["holdout"]) > 0 and len(splits["train"]) > 0
+    train_gold = {c for t in splits["train"] for c in t["gold_chunk_ids"]}
+    holdout_gold = {c for t in splits["holdout"] for c in t["gold_chunk_ids"]}
+    assert not (train_gold & holdout_gold)
+    ids = {t["task_id"] for t in splits["train"]} | {t["task_id"] for t in splits["holdout"]}
+    assert len(ids) == len(splits["train"]) + len(splits["holdout"])
 
 
 # --------------------------------------------------------------------------- #

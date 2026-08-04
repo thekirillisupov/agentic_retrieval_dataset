@@ -47,7 +47,7 @@ S6 distract  transplant → perturb → generate, verified, injected: v0 → v1
    ↓
 S7 isolate   cross-task isolation ON THE POST-INJECTION INDEX
    ↓
-S8 export    final pool, SFT/RL/holdout splits, datamix stats
+S8 export    final pool, train/holdout split, datamix stats
 ```
 
 Every stage reads and writes JSONL and resumes by skipping what it already
@@ -87,7 +87,7 @@ chunks of one fact, not between facts. If a fact is covered by `{c₁, c₂, c�
 leave-one-chunk-out finds every single one individually unnecessary and strips
 the whole group. Facts are atomic by construction, so leave-one-fact-out cannot
 do that. When a fact is removed, `hop_depth` is recomputed — the hop it carried
-was not load-bearing, and that axis feeds SFT binning.
+was not load-bearing, and that axis is what difficulty binning reads.
 
 **Fact groups are never collapsed to one representative.** The other members
 stay in the index and will be retrieved; a rollout that returned an equally
@@ -98,9 +98,15 @@ valid member would score zero for a correctly found fact.
 ## Reading the output
 
 `out_sid/tasks.jsonl` — one record per task, matching plan §10. Splits are in
-`split_sft.jsonl` / `split_rl.jsonl` / `split_holdout.jsonl` (questions and gold
-sets disjoint between RL and SFT; holdout stratified over mechanic × difficulty
-with the hard tail up-weighted).
+`split_train.jsonl` / `split_holdout.jsonl`: holdout is stratified over
+mechanic × difficulty with the hard tail up-weighted, and no train task shares a
+gold chunk with a holdout task.
+
+There is **no SFT/RL split**. That boundary is drawn by what each half will be
+used for, and nothing in this pipeline collects trajectories yet — so it would
+be drawn on no evidence, and drawing it early costs tasks, since enforcing
+disjoint gold sets across it discards whichever side loses the overlap. Split
+the pool when there is a trainer to split it for.
 
 `out_sid/stats.json` carries the numbers that decide things:
 
@@ -175,6 +181,7 @@ A leaked marker teaches "synthetic → ignore", which is a shortcut, not a skill
 | LLM proposes submechanics per corpus | fixed grounded list per mechanic | they are local diversity, not cells; a corpus that cannot support a cell fails its gates and shows up in `gate_stats` |
 | dual-critic on the pilot | implemented, off by default (`gates.dual_critic`) | it is a one-off purchase of information, per the plan itself |
 | teacher trajectories, SFT filtering by teacher recall | **not implemented** | needs the RL harness — four tools, the `<state>` format, per-episode doc_id remapping. `export.py` produces exactly the pool those would be collected on. |
+| SFT / RL pool split (§9.4) | **not implemented** — train/holdout only | the split is defined by downstream use; with no trajectories it would be arbitrary, and its disjoint-gold requirement silently discards tasks |
 | `share_singleton_groups` decides NDCG granularity | measured and reported with the verdict; the metric itself lives in the trainer | out of this repo's scope |
 
 `fused_gap` bins, the `lexicon` arm rule (`lex_gap` high **and** `fused_gap`

@@ -116,9 +116,12 @@ class IsolationConfig:
 
 @dataclass
 class ExportConfig:
-    """S8-lite — final pool, splits, datamix stats (plan §9.2–9.5)."""
+    """S8-lite — final pool, train/holdout split, datamix stats (plan §9.3, §9.5).
+
+    No SFT/RL split: that boundary is drawn by what each half is used for, and
+    nothing here collects trajectories yet.
+    """
     holdout_size: int = 300
-    rl_fraction: float = 0.5              # of the non-holdout pool
     dedup_threshold: float = 0.8          # MinHash Jaccard over question shingles
     fused_gap_bins: dict[str, float] = field(default_factory=lambda: {
         # upper bound of each bin; "high" takes the rest
