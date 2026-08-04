@@ -11,6 +11,14 @@ The defining property: **every question requires combining information from seve
 *neighbouring* chunks**, and the gold set is **verified to be minimal and strictly
 necessary** — so a retriever genuinely has to find *all* the gold chunks, not just one.
 
+> **Looking for the SID task factory?** The pipeline built from
+> `synthetic_data_plan_sid1_v0.8` — entity subgraph mining, an A1 coverage
+> taxonomy, five gates, measured retrieval gaps, a *mutable* index with
+> conditional distractor injection and post-injection isolation — lives beside
+> this one and is documented in **[README_SID.md](README_SID.md)**
+> (`run_sid.py`, `config_sid.yaml`, `arqg/sid/`). The two share the LLM,
+> embedding and IO layers but are otherwise independent.
+
 ---
 
 ## Why this design (quality first)

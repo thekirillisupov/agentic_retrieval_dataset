@@ -1,0 +1,263 @@
+"""Configuration for the SID pipeline.
+
+Reuses the existing ``arqg`` LLM / embeddings / filter configs so a single YAML
+can drive both pipelines, and adds the SID-specific stage knobs.
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field, fields
+from typing import Any
+
+from ..config import FilterConfig, LLMConfig, RetrieveConfig, _merge_dataclass
+
+
+@dataclass
+class MiningConfig:
+    """S1 — entity ↔ chunk bipartite mining (plan §3)."""
+    # entity is "niche enough": idf above this percentile of the corpus idf
+    # distribution (plan §3.2 starts at the 75th percentile)
+    idf_percentile: float = 75.0
+    max_document_frequency: int = 40      # τ_df — entity must not be ubiquitous
+    min_co_occurrence: int = 2            # entity must bridge >= 2 chunks
+    min_chunks: int = 2                   # subgraph size bounds
+    max_chunks: int = 4
+    max_subgraphs_per_entity: int = 2
+    max_subgraphs_per_file: int = 6       # keep large documents from dominating
+    target_subgraphs: int = 2000          # 0 = unlimited
+    cross_document_bonus: bool = True     # prefer subgraphs spanning >1 document
+    # strict version: drop single-document subgraphs entirely. A question whose
+    # gold sits in one document can often be answered by reading on rather than
+    # issuing a second query, which is not the behaviour we are training.
+    require_cross_document: bool = False
+    seed: int = 11
+
+
+@dataclass
+class TaxonomyConfig:
+    """S2 — coverage cells (plan §4)."""
+    # A1 mechanics to generate; empty = all six
+    mechanics: list[str] = field(default_factory=list)
+    negation_rate: float = 0.20           # plan §4.1 wants >= 15%
+    # 1-of-N local diversity (plan §4.5). N candidates from *different*
+    # subgraphs with *different* submechanics; the best `keep_per_batch` go on.
+    candidates_per_cell: int = 3
+    keep_per_batch: int = 1
+    seed: int = 17
+
+
+@dataclass
+class ComposeConfig:
+    """S3 — facts and composition (plan §5)."""
+    max_facts_per_chunk: int = 4
+    min_facts_per_question: int = 2
+    max_facts_per_question: int = 5
+    max_compose_iters: int = 2            # plan says 4; 2 is enough for v1 cost
+    verbatim_match: bool = True           # harness check: span occurs in chunk
+
+
+@dataclass
+class GatesConfig:
+    """S4/S5 — gates (plan §6, §7.0)."""
+    top_k: int = 10                       # top-k used by every gate probe
+    # G_BROAD: reject when the whole question as one query already returns the
+    # entire gold set (trivial task).
+    run_broad: bool = True
+    # G_REACH: every gold chunk must be retrievable by at least one probe.
+    run_reach: bool = True
+    # G_SOLVE dual-critic — pilot only (plan §6). Off by default: one critic.
+    dual_critic: bool = False
+    drop_on_disagreement: bool = True
+    # G_MIN: leave-one-fact-out minimisation.
+    run_min: bool = True
+    min_facts_after_min: int = 2          # drop tasks that collapse to one fact
+    # G_REP: expand each surviving fact to every chunk that states it.
+    run_rep: bool = True
+    rep_top_k: int = 8                    # candidates retrieved per fact
+    rep_max_judges_per_fact: int = 5      # cap entailment calls
+    rep_min_score: float = 0.55           # dense prefilter before judging
+
+
+@dataclass
+class DensityConfig:
+    """§7.1 — neighbourhood density and its corpus norm."""
+    tau_sim_percentile: float = 95.0
+    tau_low_percentile: float = 80.0
+    sample_chunks: int = 600              # chunks sampled for the pairwise τ estimate
+    pseudo_gold_sets: int = 2000          # bootstrap sets for density_median_all
+    min_reach_tasks_for_median: int = 300  # below this, use the provisional median
+    seed: int = 29
+
+
+@dataclass
+class DistractorConfig:
+    """§7.2–7.5 — conditional injection."""
+    enabled: bool = True
+    n_max: int = 15                       # cap per task
+    low_threshold_ratio: float = 0.34     # density < ratio*median => sparse_origin
+    min_l2: int = 2                       # plan: >= 2 L2 distractors per task
+    l1_pool: int = 40                     # candidate donor chunks sampled per task
+    l2_pool: int = 20
+    allow_l3: bool = True
+    max_candidates_per_task: int = 24     # generation budget before giving up
+    require_l2_attribute_in_question: bool = True   # §7.5 p.4
+    require_neighborhood_hit: bool = True           # §7.5 p.5
+    reach_recheck_sample: int = 500       # §7.6 sampled G_REACH re-run (0 = off)
+
+
+@dataclass
+class IsolationConfig:
+    """S7 — cross-task isolation on the post-injection index (plan §8)."""
+    enabled: bool = True
+    top_k: int = 10
+    judge_top_n: int = 4                  # non-gold hits handed to the judge
+    judge_alternative_paths: bool = True  # set False for a cheap id-only check
+
+
+@dataclass
+class ExportConfig:
+    """S8-lite — final pool, splits, datamix stats (plan §9.2–9.5)."""
+    holdout_size: int = 300
+    rl_fraction: float = 0.5              # of the non-holdout pool
+    dedup_threshold: float = 0.8          # MinHash Jaccard over question shingles
+    fused_gap_bins: dict[str, float] = field(default_factory=lambda: {
+        # upper bound of each bin; "high" takes the rest
+        "low": 0.33,
+        "mid": 0.66,
+    })
+    seed: int = 31
+
+
+@dataclass
+class SidPaths:
+    corpus: str = "data/chunks.jsonl"     # v0 corpus
+    out_dir: str = "out_sid"
+
+    def _p(self, name: str) -> str:
+        return os.path.join(self.out_dir, name)
+
+    # S0
+    @property
+    def compat_report(self) -> str: return self._p("index_compat_report.json")
+    @property
+    def index_fields(self) -> str: return self._p("index_fields.yaml")
+    @property
+    def manifest(self) -> str: return self._p("index_manifest.json")
+    # S1
+    @property
+    def subgraphs(self) -> str: return self._p("subgraphs.jsonl")
+    # S3
+    @property
+    def facts(self) -> str: return self._p("facts.jsonl")
+    @property
+    def candidates(self) -> str: return self._p("candidates.jsonl")
+    # S4/S5
+    # Decision logs record EVERY candidate a stage looked at, pass or fail.
+    # Resuming off the survivor file alone would re-process rejects — and for a
+    # 1-of-N batch that means a runner-up gets promoted on the second run,
+    # silently inflating the pool.
+    @property
+    def gate_decisions(self) -> str: return self._p("gate_decisions.jsonl")
+    @property
+    def minimize_decisions(self) -> str: return self._p("minimize_decisions.jsonl")
+    @property
+    def isolation_decisions(self) -> str: return self._p("isolation_decisions.jsonl")
+    @property
+    def gated(self) -> str: return self._p("gated.jsonl")
+    @property
+    def gate_stats(self) -> str: return self._p("gate_stats.json")
+    @property
+    def ceiling_pool(self) -> str: return self._p("environment_ceiling_pool.jsonl")
+    @property
+    def minimized(self) -> str: return self._p("minimized.jsonl")
+    # S6
+    @property
+    def density_stats(self) -> str: return self._p("density.json")
+    @property
+    def densified(self) -> str: return self._p("densified.jsonl")
+    @property
+    def injection_ledger(self) -> str: return self._p("injection_ledger.jsonl")
+    @property
+    def injected_corpus(self) -> str: return self._p("corpus_injected.jsonl")
+    @property
+    def injected_tasks(self) -> str: return self._p("injected.jsonl")
+    # S7
+    @property
+    def isolation_report(self) -> str: return self._p("isolation_report.json")
+    @property
+    def isolated(self) -> str: return self._p("isolated.jsonl")
+    # S8
+    @property
+    def tasks(self) -> str: return self._p("tasks.jsonl")
+    @property
+    def stats(self) -> str: return self._p("stats.json")
+
+    def split(self, name: str) -> str:
+        return self._p(f"split_{name}.jsonl")
+
+    def dense_dir(self, version: str) -> str:
+        return os.path.join(self.out_dir, "index", version)
+
+
+@dataclass
+class SidConfig:
+    corpus_name: str = "corpus"
+    language: str = "ru"
+    taxonomy_version: str = "v0.8"
+
+    llm: LLMConfig = field(default_factory=LLMConfig)
+    judge: LLMConfig = field(default_factory=lambda: LLMConfig(temperature=0.0))
+    embed: RetrieveConfig = field(default_factory=RetrieveConfig)
+    filters: FilterConfig = field(default_factory=FilterConfig)
+
+    mining: MiningConfig = field(default_factory=MiningConfig)
+    taxonomy: TaxonomyConfig = field(default_factory=TaxonomyConfig)
+    compose: ComposeConfig = field(default_factory=ComposeConfig)
+    gates: GatesConfig = field(default_factory=GatesConfig)
+    density: DensityConfig = field(default_factory=DensityConfig)
+    distractors: DistractorConfig = field(default_factory=DistractorConfig)
+    isolation: IsolationConfig = field(default_factory=IsolationConfig)
+    export: ExportConfig = field(default_factory=ExportConfig)
+    paths: SidPaths = field(default_factory=SidPaths)
+
+    rrf_k: int = 60           # RRF constant for the hybrid fusion
+    fusion_candidates: int = 100   # per-branch depth before fusion
+    log_level: str = "INFO"
+
+    # ---- loading --------------------------------------------------------- #
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "SidConfig":
+        cfg = cls()
+        # a top-level `sid:` block is accepted so one YAML can hold both pipelines
+        d = dict(d or {})
+        if "sid" in d and isinstance(d["sid"], dict):
+            merged = {k: v for k, v in d.items() if k != "sid"}
+            merged.update(d["sid"])
+            d = merged
+        for f in fields(cls):
+            if f.name not in d or d[f.name] is None:
+                continue
+            val, cur = d[f.name], getattr(cfg, f.name)
+            if hasattr(cur, "__dataclass_fields__") and isinstance(val, dict):
+                setattr(cfg, f.name, _merge_dataclass(cur, val))
+            else:
+                setattr(cfg, f.name, val)
+        cfg._resolve_secrets()
+        return cfg
+
+    @classmethod
+    def load(cls, path: str | None) -> "SidConfig":
+        data: dict[str, Any] = {}
+        if path:
+            import yaml
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        return cls.from_dict(data)
+
+    def _resolve_secrets(self) -> None:
+        for llm in (self.llm, self.judge):
+            if not llm.api_key:
+                llm.api_key = os.environ.get(llm.api_key_env, "") or llm.default_dummy_key
+            env_url = os.environ.get("ARQG_BASE_URL")
+            if env_url:
+                llm.base_url = env_url

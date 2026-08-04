@@ -1,0 +1,138 @@
+# SID — synthetic dataset factory for agentic retrieval (plan v0.8, first version)
+#
+#   python run_sid.py all --config config_sid.yaml
+#   python run_sid.py all --config config_sid.yaml --backend mock \
+#       --corpus tests/sample_corpus_sid.jsonl --out-dir out_sid_demo
+
+corpus_name: ckr
+language: ru
+taxonomy_version: v0.8
+log_level: INFO
+
+paths:
+  corpus: data/chunks.jsonl        # v0 index: {"file_name","index","raw_text",...}
+  out_dir: out_sid
+
+# ---------------------------------------------------------------------------
+# Models. Generator and judge may differ — a stronger judge reduces self-bias.
+# ---------------------------------------------------------------------------
+llm:
+  backend: openai                  # openai | gateway | anthropic | mock
+  base_url: http://localhost:8000/v1
+  model: Qwen/Qwen2.5-72B-Instruct
+  api_key_env: OPENAI_API_KEY
+  temperature: 0.6                 # composition wants variety
+  max_tokens: 1536
+  max_concurrency: 16
+
+judge:
+  backend: openai
+  base_url: http://localhost:8000/v1
+  model: Qwen/Qwen2.5-72B-Instruct
+  api_key_env: OPENAI_API_KEY
+  temperature: 0.0                 # judging wants determinism
+  max_tokens: 800
+  max_concurrency: 16
+
+# Dense branch of the hybrid retriever. This must be the SAME embedder the agent
+# uses at rollout time — the gates measure against this environment.
+embed:
+  backend: gigachat                # gigachat | mock
+  model: GigaEmbeddings-3B-2025-09
+  base_url: https://gigachat.devices.sberbank.ru/api/v1/embeddings
+  token_env: GIGACHAT_TOKEN
+  auth_key_env: GIGACHAT_AUTH_KEY
+  verify_ssl: true
+  ca_bundle: ""
+  batch_size: 32
+  max_concurrency: 8
+
+rrf_k: 60                          # RRF constant of the hybrid fusion
+fusion_candidates: 100             # per-branch depth before fusion
+
+# Seed-chunk eligibility (junk stays in the index but is never gold)
+filters:
+  min_chars: 200
+  max_chars: 4000
+  min_words: 25
+  min_alpha_ratio: 0.5
+  min_cyrillic_ratio: 0.3
+
+# --- S1 --------------------------------------------------------------------
+mining:
+  idf_percentile: 75               # τ_idf — start of the plan's calibration
+  max_document_frequency: 40       # τ_df
+  min_co_occurrence: 2
+  min_chunks: 2
+  max_chunks: 4
+  max_subgraphs_per_entity: 2
+  max_subgraphs_per_file: 6
+  target_subgraphs: 2000           # 0 = unlimited
+  cross_document_bonus: true
+
+# --- S2 --------------------------------------------------------------------
+taxonomy:
+  mechanics: []                    # [] = all six A1 values
+  negation_rate: 0.20              # plan wants >= 15% of tasks with negation
+  candidates_per_cell: 3           # 1-of-N local diversity (plan says 6)
+  keep_per_batch: 1
+
+# --- S3 --------------------------------------------------------------------
+compose:
+  max_facts_per_chunk: 4
+  min_facts_per_question: 2
+  max_facts_per_question: 5
+  max_compose_iters: 2
+  verbatim_match: true             # drop facts whose span is not in the chunk
+
+# --- S4 / S5 ---------------------------------------------------------------
+gates:
+  top_k: 10
+  run_broad: true
+  run_reach: true
+  dual_critic: false               # pilot only; measures disagreement_rate
+  drop_on_disagreement: true
+  run_min: true
+  min_facts_after_min: 2
+  run_rep: true
+  rep_top_k: 8
+  rep_max_judges_per_fact: 5
+  rep_min_score: 0.55
+
+# --- §7.1 ------------------------------------------------------------------
+density:
+  tau_sim_percentile: 95           # intra-corpus percentile, never absolute
+  tau_low_percentile: 80
+  sample_chunks: 600
+  pseudo_gold_sets: 2000
+  min_reach_tasks_for_median: 300  # below this the provisional median is used
+
+# --- §7.2-7.6 --------------------------------------------------------------
+distractors:
+  enabled: true
+  n_max: 15
+  low_threshold_ratio: 0.34        # below this fraction of the median: sparse_origin
+  min_l2: 2                        # >= 2 L2 (near-miss) distractors per task
+  l1_pool: 40
+  l2_pool: 20
+  allow_l3: true                   # fallback only; share_L3 > 10% is an alarm
+  max_candidates_per_task: 24
+  require_l2_attribute_in_question: true
+  require_neighborhood_hit: true   # sim(d, gold) > τ_sim or the budget is wasted
+  reach_recheck_sample: 500
+
+# --- S7 --------------------------------------------------------------------
+isolation:
+  enabled: true
+  top_k: 10
+  judge_top_n: 4
+  judge_alternative_paths: true
+
+# --- S8 --------------------------------------------------------------------
+export:
+  holdout_size: 300
+  rl_fraction: 0.5
+  dedup_threshold: 0.8
+  fused_gap_bins:
+    low: 0.33
+    mid: 0.66

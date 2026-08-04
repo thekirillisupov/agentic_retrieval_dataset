@@ -3,8 +3,11 @@ __pycache__/
 .pytest_cache/
 out/
 out_demo/
+out_sid/
+out_sid_demo/
 data/
 config.yaml
+config_mine.yaml
 .venv/
 *.egg-info/
 out_v2/
