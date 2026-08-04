@@ -1,0 +1,172 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Agentic-retrieval dataset pipeline — example configuration
+#
+# Two supported setups for the generator/judge LLM. Both use the SAME settings
+# block; only base_url / model / api key differ:
+#
+#  (A) HOSTED API you already have (OpenAI-compatible — OpenAI, Together, DeepSeek,
+#      OpenRouter, Mistral, a corporate gateway, etc.):
+#        backend: openai
+#        base_url: https://api.your-provider.com/v1
+#        model:    <provider model id>
+#        api_key_env: OPENAI_API_KEY          # export the key in this env var
+#
+#  (B) SELF-HOSTED vLLM (you run it separately — see scripts/serve_vllm.sh):
+#        backend: openai                      # vLLM speaks the OpenAI API
+#        base_url: http://localhost:8000/v1
+#        model:    Qwen/Qwen2.5-72B-Instruct  # must match what vLLM is serving
+#        api_key_env: OPENAI_API_KEY          # any value; vLLM ignores it
+#
+#  (C) Native Anthropic:
+#        backend: anthropic
+#        model:   <anthropic model id>
+#        api_key_env: ANTHROPIC_API_KEY
+#
+#  (D) Corporate gateway (mTLS curl-style — NOT OpenAI SDK):
+#        backend: gateway
+#        base_url: https://sm.apps.example.ru/qwen_35   # full POST URL
+#        cert_file: published.pem
+#        key_file:  client.key
+#        verify_ssl: false
+#        temperature: 0.1
+#        max_tokens: 1536
+#        extra_body:
+#          top_p: 0.95
+#          reasoning: false
+#          chat_template_kwargs:
+#            enable_thinking: false
+# ─────────────────────────────────────────────────────────────────────────────
+
+log_level: INFO
+
+# Generator LLM -----------------------------------------------------------------
+llm:
+  backend: gateway
+  base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+  cert_file: gigachat/published.pem
+  key_file: gigachat/00CA0001CLLMllm99usr.key
+  verify_ssl: false
+  temperature: 0.7
+  max_tokens: 1536
+  max_concurrency: 4
+  extra_body:
+    top_p: 0.90
+    reasoning: false
+    chat_template_kwargs:
+      enable_thinking: false
+
+# Generation process #1 — neighbour-window multi-hop questions ------------------
+generate:
+  enabled: false                  # set false to skip this generator entirely
+  questions_per_window: 1
+  require_multi_chunk: true
+  min_gold_chunks: 2            # final dataset requires >= this many gold chunks
+  # Question style mix — mimics real user phrasing (see arqg/prompts.py STYLES).
+  # One style is sampled per question (deterministic) and recorded in the item.
+  #   simple_user  — short, colloquial, like a support-chat / search-bar question
+  #   novice       — no domain terminology, describes things in everyday words
+  #   expert       — precise domain phrasing
+  #   search_query — 3-8 word search-bar query, possibly not a full sentence
+  styles:
+    simple_user: 0.45
+    novice: 0.20
+    expert: 0.20
+    search_query: 0.15
+  style_seed: 17
+
+# Generation process #2 — document-level simple / hard questions ----------------
+# Separate, independently-switchable generator. Works over a WHOLE document and
+# has NO limit on the number of anchor passages:
+#   simple → answer fully contained in ONE passage              (gold = 1)
+#   hard   → answer requires combining MANY passages in the doc (gold >= 2, no cap)
+# Output format is identical (keeps gold_chunk_ids); it shares the verify stage.
+# Run alongside #1 (both feed candidates.jsonl) or on its own:
+#   set generate.enabled: false and docgen.enabled: true, then `all`,
+#   or run stages explicitly: docunits -> gen-docs -> verify -> finalize
+docgen:
+  enabled: true
+  questions_per_unit: 1
+  difficulty_weights:            # sampled per document unit
+    simple: 0.5
+    hard: 0.5
+  simple_max_gold: 1             # passages a "simple" question may rest on
+  hard_min_gold: 2              # minimum anchors for a "hard" question
+  hard_max_gold: 0             # 0 = unlimited anchor passages
+  styles:                        # same user-phrasing styles as generator #1
+    simple_user: 0.45
+    novice: 0.20
+    expert: 0.20
+    search_query: 0.15
+  style_seed: 42
+  units:
+    max_doc_chars: 120000         # huge documents are split into spans this big
+    max_doc_chunks: 40
+    min_unit_chunks: 1
+    max_units_per_file: 4
+    target_units: 0           # total document units to build (0 = all)
+    seed: 23
+
+# Verification (the quality gate) -----------------------------------------------
+verify:
+  enabled: true
+  run_groundedness: true
+  run_minimality: true
+  drop_if_single_chunk_sufficient: true
+  require_standalone: true
+  require_specific: true
+  # The judge can be a DIFFERENT (often stronger) model than the generator.
+  # Using a separate model reduces self-bias and improves filtering quality.
+  judge:
+    backend: gateway
+    base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+    cert_file: gigachat/published.pem
+    key_file: gigachat/00CA0001CLLMllm99usr.key
+    verify_ssl: false
+    temperature: 0.1           # deterministic judging
+    max_tokens: 1024
+    max_concurrency: 16
+    extra_body:
+      reasoning: false
+      chat_template_kwargs:
+        enable_thinking: false
+
+# Collect-all-positives — entailment judge over retrieved passages ---------------
+collect:
+  enabled: true
+  top_k: 20
+  judge:
+    backend: gateway
+    base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+    cert_file: gigachat/published.pem
+    key_file: gigachat/00CA0001CLLMllm99usr.key
+    verify_ssl: false
+    temperature: 0.0
+    max_tokens: 512
+    max_concurrency: 4
+    extra_body:
+      reasoning: false
+      chat_template_kwargs:
+        enable_thinking: false
+
+# Retrieval — GigaChat embeddings (OAuth token refreshed every 10 min) -----------
+retrieve:
+  enabled: true
+  backend: gigachat
+  model: GigaEmbeddings-3B-2025-09
+  auth_key_env: GIGACHAT_AUTH_KEY
+  scope: GIGACHAT_API_CORP
+  verify_ssl: false
+  oauth_refresh_interval: 600
+  batch_size: 8
+  max_input_chars: 8192
+  max_concurrency: 2
+  min_request_interval: 1.0
+
+# Hard-negative mining (optional; needs sentence-transformers + torch) ----------
+negatives:
+  enabled: false
+  embedding_model: intfloat/multilingual-e5-large
+  top_k: 5
+  exclude_same_file: false
+  device: cpu                  # set to "cuda" if a GPU is available
+  batch_size: 64
