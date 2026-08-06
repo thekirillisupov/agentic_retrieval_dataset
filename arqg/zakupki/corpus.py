@@ -27,7 +27,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any, Iterable, Iterator
 
 from ..utils import ensure_parent, log, write_jsonl
 from .parse import ProcurementDoc, Section
@@ -191,53 +191,91 @@ def build_corpus(docs: Iterable[ProcurementDoc], corpus_path: str, *,
 # --------------------------------------------------------------------------- #
 # near-duplicate report
 # --------------------------------------------------------------------------- #
-def _groups(records: Sequence[dict[str, Any]], hasher) -> dict[str, list[int]]:
-    buckets: dict[str, list[int]] = defaultdict(list)
-    for i, rec in enumerate(records):
-        buckets[hasher(rec["raw_text"])].append(i)
-    return {h: idx for h, idx in buckets.items() if len(idx) > 1}
+#: How many distinct hashes may keep a text sample. Counts are exact regardless;
+#: this only bounds the memory spent on examples and the similarity estimate, and
+#: a merged ЕИС corpus is large enough that holding a sample per group would cost
+#: more than the corpus itself.
+MAX_TRACKED_GROUPS = 50_000
+SAMPLE_CHARS = 400
 
 
-def _summarise(records: Sequence[dict[str, Any]], buckets: dict[str, list[int]],
-               *, with_similarity: bool, examples: int) -> dict[str, Any]:
-    in_groups = sum(len(v) for v in buckets.values())
-    ranked = sorted(buckets.items(), key=lambda kv: -len(kv[1]))
-    out: dict[str, Any] = {
-        "n_groups": len(buckets),
-        "n_chunks_in_groups": in_groups,
-        "share_of_chunks": round(in_groups / len(records), 4) if records else 0.0,
-        "largest_group": len(ranked[0][1]) if ranked else 0,
-    }
-    if with_similarity:
-        # Mean pairwise similarity of a group's first two members: how much
-        # actual text survives the mask, i.e. how confusable the pair really is.
-        sims = [jaccard(records[idx[0]]["raw_text"], records[idx[1]]["raw_text"])
-                for _, idx in ranked[:200]]
-        out["mean_jaccard_within_group"] = round(sum(sims) / len(sims), 4) if sims else 0.0
-    out["examples"] = [
-        {
-            "group_size": len(idx),
-            "chunk_ids": [f"{records[i]['file_name']}::{records[i]['index']}" for i in idx[:3]],
-            "sample": records[idx[0]]["raw_text"][:400],
+class _DuplicateCounter:
+    """Streaming duplicate statistics: exact counts, sampled examples."""
+
+    def __init__(self, hasher, *, max_tracked: int = MAX_TRACKED_GROUPS):
+        self.hasher = hasher
+        self.max_tracked = max_tracked
+        self.counts: dict[str, int] = defaultdict(int)
+        self._first: dict[str, tuple[str, str]] = {}     # hash -> (chunk_id, sample)
+        self.groups: dict[str, dict[str, Any]] = {}      # hash -> example
+
+    def add(self, chunk_id: str, text: str) -> None:
+        h = self.hasher(text)
+        self.counts[h] += 1
+        n = self.counts[h]
+        if n == 1:
+            if len(self._first) < self.max_tracked:
+                self._first[h] = (chunk_id, text[:SAMPLE_CHARS])
+        elif n == 2:
+            first = self._first.pop(h, None)
+            if first is not None:
+                self.groups[h] = {
+                    "chunk_ids": [first[0], chunk_id],
+                    "sample": first[1],
+                    "similarity": round(jaccard(first[1], text[:SAMPLE_CHARS]), 4),
+                }
+        elif h in self.groups and len(self.groups[h]["chunk_ids"]) < 3:
+            self.groups[h]["chunk_ids"].append(chunk_id)
+
+    def summary(self, n_chunks: int, *, with_similarity: bool,
+                examples: int) -> dict[str, Any]:
+        sizes = [c for c in self.counts.values() if c > 1]
+        out: dict[str, Any] = {
+            "n_groups": len(sizes),
+            "n_chunks_in_groups": sum(sizes),
+            "share_of_chunks": round(sum(sizes) / n_chunks, 4) if n_chunks else 0.0,
+            "largest_group": max(sizes, default=0),
         }
-        for _, idx in ranked[:examples]
-    ]
-    return out
+        if with_similarity:
+            # How much text survives the digit mask — i.e. how confusable a
+            # template-identical pair really is. Measured on the first two members
+            # of each sampled group, over the first SAMPLE_CHARS characters.
+            sims = [g["similarity"] for g in self.groups.values()]
+            out["mean_jaccard_within_group"] = (
+                round(sum(sims) / len(sims), 4) if sims else 0.0)
+            out["groups_sampled"] = len(sims)
+        ranked = sorted(self.groups.items(), key=lambda kv: -self.counts[kv[0]])
+        out["examples"] = [{"group_size": self.counts[h], **g} for h, g in ranked[:examples]]
+        return out
 
 
-def duplicate_report(records: Sequence[dict[str, Any]], *, examples: int = 5) -> dict[str, Any]:
-    """Exact and structural duplicate statistics over chunk records."""
-    records = list(records)
-    if not records:
+def duplicate_report(records: Iterable[dict[str, Any]], *,
+                     examples: int = 5) -> dict[str, Any]:
+    """Exact and structural duplicate statistics over chunk records.
+
+    Streams: a merged corpus runs to hundreds of thousands of chunks and does not
+    need to be resident to be counted. Group counts are exact; the examples and
+    the similarity estimate come from a bounded sample of groups.
+    """
+    exact = _DuplicateCounter(_content_hash)
+    template = _DuplicateCounter(_template_hash)
+    n_chunks = 0
+    files: set[str] = set()
+    for rec in records:
+        n_chunks += 1
+        files.add(rec["file_name"])
+        chunk_id = f"{rec['file_name']}::{rec['index']}"
+        text = rec["raw_text"]
+        exact.add(chunk_id, text)
+        template.add(chunk_id, text)
+    if not n_chunks:
         return {"n_chunks": 0}
-    exact = _groups(records, _content_hash)
-    template = _groups(records, _template_hash)
     return {
-        "n_chunks": len(records),
-        "n_files": len({r["file_name"] for r in records}),
-        "exact_duplicates": _summarise(records, exact, with_similarity=False, examples=examples),
-        "structural_duplicates": _summarise(records, template, with_similarity=True,
-                                            examples=examples),
+        "n_chunks": n_chunks,
+        "n_files": len(files),
+        "exact_duplicates": exact.summary(n_chunks, with_similarity=False, examples=examples),
+        "structural_duplicates": template.summary(n_chunks, with_similarity=True,
+                                                  examples=examples),
     }
 
 

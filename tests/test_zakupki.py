@@ -20,6 +20,13 @@ from arqg.zakupki.client import EisError, build_envelope, parse_response
 from arqg.zakupki.corpus import (ChunkOptions, build_corpus, chunk_document,
                                  duplicate_report, jaccard)
 from arqg.zakupki.parse import iter_documents, parse_path, parse_xml
+from arqg.zakupki.facets import Facets, SourceRef
+from arqg.zakupki.merge import (SourceSpec, build_merged, is_mergeable,
+                                merge_sources)
+from arqg.zakupki.normalize import (clean_text, dedupe_indices, format_money,
+                                    format_percent, parse_date, price_bucket,
+                                    region_name, round_gloss, smart_case,
+                                    split_items)
 from arqg.zakupki.tabular import (PROFILES, detect_profile, iter_docs,
                                   parse_column_overrides)
 
@@ -257,6 +264,7 @@ def test_jaccard_is_bounded():
 # third-party dumps (the no-token path)
 # --------------------------------------------------------------------------- #
 def _dump(tmp_path, rows, header, sep=","):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "dump.csv"
     with open(path, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f, delimiter=sep)
@@ -289,7 +297,7 @@ def test_profile_is_detected_from_the_header(tmp_path):
     assert "PDDL" in profile.licence
 
 
-def test_row_renders_the_same_sections_as_an_xml_document(tmp_path):
+def test_row_renders_prose_not_form_fields(tmp_path):
     path = _dump(tmp_path, [_kaggle_row()], KAGGLE_HEADER)
     docs = list(iter_docs(path, PROFILES["kaggle_biggest"]))
     assert len(docs) == 1
@@ -297,18 +305,39 @@ def test_row_renders_the_same_sections_as_an_xml_document(tmp_path):
     assert doc.doc_id == "0173200001425000400"
     assert doc.file_name.endswith(".txt")     # a card, not an EIS XML document
     body = "\n".join(s.text() for s in doc.sections)
-    assert "Начальная (максимальная) цена контракта: 571 883 910,00 руб." in body
-    assert "Дата размещения: 11.08.2020 16:27" in body
-    assert "Закупка у субъектов малого предпринимательства: нет" in body
-    assert [s.title for s in doc.sections][:2] == ["Общие сведения", "Объект закупки"]
+
+    assert "Заказчиком выступает Администрация" in body
+    assert ("начальная (максимальная) цена контракта составляет "
+            "571 883 910,00 руб. (около 571,9 млн руб.)".capitalize() in body
+            or "571 883 910,00 руб. (около 571,9 млн руб.)" in body)
+    assert "11 августа 2020 года" in body
+    assert "предусмотрен аванс в размере 30 %" in body.lower()
+    assert "Заказчик: " not in body and "Дата размещения: " not in body
 
 
-def test_empty_columns_are_dropped_not_rendered_blank(tmp_path):
+def test_facets_reach_the_title_because_the_index_embeds_it(tmp_path):
+    path = _dump(tmp_path, [_kaggle_row()], KAGGLE_HEADER)
+    doc = next(iter(iter_docs(path, PROFILES["kaggle_biggest"])))
+    assert doc.title.startswith("Закупка № 0173200001425000400")
+    assert "Нижегородская область" in doc.title and "2020" in doc.title
+    assert "капитальному ремонту кровли" in doc.title
+
+
+def test_price_gloss_and_bucket_help_vague_queries(tmp_path):
     path = _dump(tmp_path, [_kaggle_row()], KAGGLE_HEADER)
     doc = next(iter(iter_docs(path, PROFILES["kaggle_biggest"])))
     body = "\n".join(s.text() for s in doc.sections)
-    assert "Победитель" not in body          # winner_name is empty in this row
-    assert ": \n" not in body and not body.endswith(": ")
+    assert "около 571,9 млн руб." in body
+    assert "от 100 млн до 1 млрд руб." in body
+
+
+def test_empty_columns_never_produce_dangling_clauses(tmp_path):
+    path = _dump(tmp_path, [_kaggle_row()], KAGGLE_HEADER)
+    doc = next(iter(iter_docs(path, PROFILES["kaggle_biggest"])))
+    body = "\n".join(s.text() for s in doc.sections)
+    assert "победителем" not in body.lower()   # winner_name is empty in this row
+    for line in body.splitlines():
+        assert not line.rstrip().endswith(("—", "-", ":", "«"))
 
 
 def test_doc_id_recovered_when_the_id_column_lost_digits(tmp_path):
@@ -321,7 +350,7 @@ def test_doc_id_recovered_when_the_id_column_lost_digits(tmp_path):
                       columns={"doc_id": "Num_trade", "url": "Trade", "subject": "Name"})
     doc = next(iter(iter_docs(path, profile)))
     assert doc.doc_id == "0176200005524000887"
-    assert "Номер закупки: 0176200005524000887" in doc.sections[0].text()
+    assert "Закупка № 0176200005524000887" in doc.sections[0].text()
 
 
 def test_distinct_rows_do_not_collapse_onto_one_document(tmp_path):
@@ -337,20 +366,35 @@ def test_distinct_rows_do_not_collapse_onto_one_document(tmp_path):
     assert min(per_file.values()) >= 2
 
 
-def test_semicolon_dump_with_law_codes(tmp_path):
+def test_semicolon_dump_law_codes_and_item_lists(tmp_path):
     header = ["pn_lot_anon", "fz", "region_code", "min_publish_date", "purchase_name",
               "lot_name", "lot_price", "okpd2_code", "okpd2_names",
               "additional_code", "additional_code_names", "item_descriptions"]
-    row = ["pn_lot_7031618", "44fz", "2", "2019-08-26",
-           "Услуги по проведению финансового аудита", "", "123500.0", "69.2",
-           "Услуги по проведению финансового аудита", "", "",
-           "Услуги по проведению финансового аудита"]
+    row = ["pn_lot_7031618", "44fz", "52", "2019-08-26",
+           "Приобретение компьютерной техники", "", "123500.0", "26.2",
+           "Компьютеры портативные массой не более 10 кг", "", "",
+           "Мониторы || Нулевой клиент"]
     path = _dump(tmp_path, [row], header, sep=";")
     assert detect_profile(path).name == "zakupkihack"
     doc = next(iter(iter_docs(path, PROFILES["zakupkihack"])))
     body = "\n".join(s.text() for s in doc.sections)
-    assert "Закон: 44-ФЗ" in body                     # 44fz -> 44-ФЗ
-    assert "Код ОКПД2: 69.2" in body
+    assert "в соответствии с 44-ФЗ" in body                  # 44fz -> 44-ФЗ
+    assert "коду ОКПД2 26.2" in body
+    assert "входит 2 позиции: Мониторы; Нулевой клиент" in body
+    # the dump carries only a region code; the name makes it searchable
+    assert "Нижегородская область" in body
+
+
+def test_repeated_text_across_columns_is_collapsed(tmp_path):
+    header = ["pn_lot_anon", "fz", "min_publish_date", "purchase_name", "lot_name",
+              "lot_price", "okpd2_code", "okpd2_names", "item_descriptions"]
+    row = ["pn_lot_1", "44fz", "2019-08-26", "Услуги по проведению финансового аудита",
+           "", "123500.0", "69.2", "Услуги по проведению финансового аудита",
+           "Услуги по проведению финансового аудита || Услуги по проведению финансового аудита"]
+    path = _dump(tmp_path, [row], header, sep=";")
+    doc = next(iter(iter_docs(path, PROFILES["zakupkihack"])))
+    body = "\n".join(s.text() for s in doc.sections)
+    assert body.lower().count("услуги по проведению финансового аудита") <= 2
 
 
 def test_column_overrides_are_validated():
@@ -364,3 +408,174 @@ def test_column_overrides_are_validated():
 def test_unrecognised_dump_is_not_guessed_at(tmp_path):
     path = _dump(tmp_path, [["a", "b"]], ["foo", "bar"])
     assert detect_profile(path) is None
+
+
+# --------------------------------------------------------------------------- #
+# normalisation
+# --------------------------------------------------------------------------- #
+def test_shouted_names_become_readable():
+    assert smart_case("КОМИТЕТ РЕСПУБЛИКИ АДЫГЕЯ ПО РЕГУЛИРОВАНИЮ КОНТРАКТНОЙ СИСТЕМЫ") \
+        == "Комитет республики Адыгея по регулированию контрактной системы"
+    # the region survives even in a declined form the table does not list
+    assert "Тюменской" in smart_case('ГКУ ТЮМЕНСКОЙ ОБЛАСТИ "УПРАВЛЕНИЕ ДОРОГ"')
+    # a quoted name is sentence-cased, not title-cased
+    assert smart_case('ФЕДЕРАЛЬНОЕ УЧРЕЖДЕНИЕ "ЦЕНТР ХОЗЯЙСТВЕННОГО ОБЕСПЕЧЕНИЯ"') \
+        == "Федеральное учреждение «Центр хозяйственного обеспечения»"
+
+
+def test_known_abbreviations_and_short_acronyms_keep_their_capitals():
+    out = smart_case('ГБУЗ РА "АРЦСМП И МК"')
+    assert out.startswith("ГБУЗ РА")
+    assert "МК" in out                      # ≤4 letters: assumed to be an acronym
+    assert " и " in out                     # a connective is not an acronym
+
+
+def test_already_cased_names_are_left_alone():
+    for name in ("Администрация г. Волгодонска", "ООО «Ромашка»"):
+        assert smart_case(name) == name
+
+
+def test_money_dates_and_percentages():
+    assert format_money("571883910.00") == "571 883 910,00 руб."
+    assert format_money("не указано") == "не указано"      # unparseable passes through
+    assert round_gloss("571883910.00") == "около 571,9 млн руб."
+    assert round_gloss("7808705950") == "около 7,81 млрд руб."
+    assert round_gloss("123500") == ""                     # too small to be worth a gloss
+    assert price_bucket("571883910.00") == "от 100 млн до 1 млрд руб."
+    assert parse_date("2020-08-11 16:27:33") == ("2020-08-11", "11 августа 2020 года, 16:27")
+    assert parse_date("что-то не то") == ("", "")
+    assert format_percent("30.00%") == "30 %"
+
+
+def test_control_characters_and_multivalued_cells():
+    assert clean_text("  а\x00б   в ") == "а б в"
+    assert clean_text("nan") == ""
+    assert split_items("Мониторы || Нулевой клиент") == ["Мониторы", "Нулевой клиент"]
+
+
+def test_dedupe_keeps_the_first_occurrence_and_reports_positions():
+    phrases = ["Поставка бумаги", "поставка бумаги", "Поставка бумаги А4 и картриджей"]
+    assert dedupe_indices(phrases) == [0, 2]
+
+
+def test_region_code_resolves_to_a_searchable_name():
+    assert region_name("52") == "Нижегородская область"
+    assert region_name("02") == "Республика Башкортостан"
+    assert region_name("999", fallback="Неизвестно") == "Неизвестно"
+
+
+# --------------------------------------------------------------------------- #
+# merging sources
+# --------------------------------------------------------------------------- #
+def _facets(number, **kw):
+    f = Facets(purchase_number=number, sources=[SourceRef(dataset=kw.pop("dataset", "a"))])
+    for key, value in kw.items():
+        setattr(f, key, value)
+    return f
+
+
+def test_merge_is_a_field_level_union():
+    a = _facets("0173200001425000400", subject="Поставка бумаги", customer="Заказчик А")
+    b = _facets("0173200001425000400", winner="ООО «Ромашка»", contract_date="2020-09-01",
+                dataset="b")
+    merged = a.merge(b)
+    assert merged.subject == "Поставка бумаги"          # kept from the first source
+    assert merged.winner == "ООО «Ромашка»"             # filled in from the second
+    assert {s.dataset for s in merged.sources} == {"a", "b"}
+
+
+def test_merge_prefers_the_longer_of_two_truncated_values():
+    a = _facets("1", subject="Поставка бумаги")
+    b = _facets("1", subject="Поставка бумаги офисной А4 для нужд учреждения")
+    assert a.merge(b).subject.endswith("для нужд учреждения")
+
+
+def test_only_real_registry_numbers_are_held_open_for_merging():
+    assert is_mergeable(_facets("0173200001425000400"))
+    assert not is_mergeable(_facets("pn_lot_7031618"))   # anonymised: can never match
+    assert not is_mergeable(_facets("zakupkihack_row00000001"))
+
+
+def test_records_from_two_dumps_become_one_document(tmp_path):
+    left = _dump(tmp_path / "a", [_kaggle_row()], KAGGLE_HEADER)
+    right_header = ["Num_trade", "Trade", "Name", "Date_contract"]
+    right = _dump(tmp_path / "b", [[
+        "0173200001425000400",
+        "https://zakupki.gov.ru/x/number/0173200001425000400/y",
+        "Выполнение работ по капитальному ремонту кровли здания школы",
+        "2020-09-01"]], right_header)
+
+    specs = [SourceSpec(left, PROFILES["kaggle_biggest"]),
+             SourceSpec(right, replace(PROFILES["hf_medicines"],
+                                       columns={"doc_id": "Num_trade", "url": "Trade",
+                                                "subject": "Name",
+                                                "contract_date": "Date_contract"}))]
+    merged = list(merge_sources(specs))
+    assert len(merged) == 1
+    facets = merged[0]
+    assert facets.customer_inn == "5208002260"                    # only in the left dump
+    assert facets.contract_date == "2020-09-01"                   # only in the right one
+    assert facets.subject.endswith("здания школы")                # the fuller of the two
+    assert {s.dataset for s in facets.sources} == {"kaggle_biggest", "hf_medicines"}
+
+
+def test_build_merged_writes_corpus_and_both_sidecars(tmp_path):
+    path = _dump(tmp_path, [_kaggle_row(i) for i in range(3)], KAGGLE_HEADER)
+    corpus = tmp_path / "c.jsonl"
+    meta = tmp_path / "c_meta.jsonl"
+    docs = tmp_path / "c_docs.jsonl"
+    stats = build_merged([SourceSpec(path, PROFILES["kaggle_biggest"])], str(corpus),
+                         meta_path=str(meta), docs_path=str(docs))
+
+    chunks = list(read_jsonl(str(corpus)))
+    metas = list(read_jsonl(str(meta)))
+    documents = list(read_jsonl(str(docs)))
+    assert stats["n_files"] == len(documents) == 3
+    assert len(metas) == len(chunks) == stats["n_chunks"]
+    assert all(set(c) == {"file_name", "index", "raw_text", "document_id", "title"}
+               for c in chunks)
+    # the sidecar addresses chunks the same way the pipeline does
+    assert [m["chunk_id"] for m in metas] == [f"{c['file_name']}::{c['index']}"
+                                              for c in chunks]
+
+
+def test_chunk_metadata_carries_the_facets_a_query_filters_on(tmp_path):
+    path = _dump(tmp_path, [_kaggle_row()], KAGGLE_HEADER)
+    meta = tmp_path / "m.jsonl"
+    build_merged([SourceSpec(path, PROFILES["kaggle_biggest"])],
+                 str(tmp_path / "c.jsonl"), meta_path=str(meta))
+    record = next(iter(read_jsonl(str(meta))))
+    assert record["region"] == "Нижегородская область"
+    assert record["year"] == "2020"
+    assert record["price_bucket"] == "от 100 млн до 1 млрд руб."
+    assert record["procedure"] == "Электронный аукцион"
+    assert record["source_url"].endswith("regNumber=0173200001425000400")
+    assert record["section"]                     # which part of the document this is
+    # provenance paths are NOT repeated per chunk — that doubled the sidecar
+    assert "sources" not in record
+
+
+def test_document_metadata_carries_the_paths(tmp_path):
+    path = _dump(tmp_path, [_kaggle_row()], KAGGLE_HEADER)
+    docs = tmp_path / "d.jsonl"
+    build_merged([SourceSpec(path, PROFILES["kaggle_biggest"])],
+                 str(tmp_path / "c.jsonl"), docs_path=str(docs))
+    record = next(iter(read_jsonl(str(docs))))
+    assert record["sources"][0]["path"] == path              # the dump file on disk
+    assert record["sources"][0]["locator"] == "row 0"        # the row inside it
+    assert "kaggle" in record["sources"][0]["origin"]        # where it was published
+    assert "PDDL" in record["licences"][0]
+    assert record["source_url"].startswith("https://zakupki.gov.ru/epz/order/notice/")
+    assert record["chunk_ids"] and len(record["chunk_ids"]) == record["n_chunks"]
+    assert "Нижегородская область" in record["keywords"]
+
+
+def test_portal_url_is_rebuilt_from_the_registry_number():
+    f = _facets("0173200001425000400", law="44-ФЗ", url="https://example.org/search?q=1")
+    assert f.notice_url.endswith("/epz/order/notice/view/common-info.html"
+                                 "?regNumber=0173200001425000400")
+    f = _facets("31705770243", law="223-ФЗ", url="https://example.org/search?q=1")
+    assert "/223/purchase/public/purchase/info/" in f.notice_url
+    # nothing recognisable: keep whatever link the dump gave us
+    f = _facets("pn_lot_1", url="https://example.org/search?q=1")
+    assert f.notice_url == "https://example.org/search?q=1"

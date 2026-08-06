@@ -225,6 +225,120 @@ The profile is detected from the header; anything else goes through
 columns are ignored rather than guessed at — a mis-mapped ИНН would quietly
 poison entity mining downstream. Reading `.xlsx` needs `openpyxl`.
 
+### One corpus out of every dump (`merge`)
+
+`merge` folds any number of dumps into a single corpus, deduplicating on the
+registry number, and writes the metadata alongside it:
+
+```bash
+python scripts/build_zakupki_corpus.py merge \
+    --input tender_data.csv \
+    --input tenders_farmcom_info.xlsx \
+    --input train_data.csv:zakupkihack:200000 \
+    --name zakupki_all --out-dir data/zakupki
+```
+
+Each `--input` is `PATH[:PROFILE[:LIMIT]]`; the profile defaults to header
+detection and the limit caps how many rows are taken from that file. Four files
+come out:
+
+```
+zakupki_all.jsonl            the corpus — file_name / index / raw_text / document_id / title
+zakupki_all_meta.jsonl       one record per chunk: facets to filter and rerank on
+zakupki_all_documents.jsonl  one record per document: full facets, keywords, source paths
+zakupki_all_manifest.json    what went in, under which licence
+```
+
+The dumps are slices of the same registry with *different columns* — one carries
+the winner and the region name, another the ОКПД2 code and the item list, a
+third the contract date. Concatenating them would give the same procurement
+twice with half the fields each time, so records are merged field by field on the
+registry number: the first source to fill a field wins, and a longer value
+replaces a shorter one it contains (dumps truncate). Merging is streamed —
+records with a real 19-digit number are held so a later source can complete them,
+records with an anonymised id (`pn_lot_*`, which can never match anything) are
+written straight out, so a 0.5M-row dump does not have to sit in memory just so a
+4.5k-row dump can be merged into it.
+
+### Preprocessing: from form fields to sentences
+
+A dump row is a database record, and dumped verbatim it reads like one. What the
+sources actually contain: customer names shouted in caps (2957 of 3000 sampled
+rows in the HF dump), bare float amounts, SQL timestamps, `||`-packed cells, and
+the same sentence repeated across `purchase_name`, `okpd2_names` and
+`item_descriptions`. `arqg/zakupki/normalize.py` and `facets.py` turn that into:
+
+```
+Общие сведения о закупке
+Закупка № 0173200001425000400 размещена в единой информационной системе
+11 августа 2020 года, 16:27. Определение поставщика проводится в соответствии
+с 44-ФЗ способом «электронный аукцион». Документ опубликован по адресу
+https://zakupki.gov.ru/epz/order/notice/view/common-info.html?regNumber=…
+
+Цена контракта и обеспечение
+Начальная (максимальная) цена контракта составляет 571 883 910,00 руб.
+(около 571,9 млн руб.). По масштабу закупка относится к диапазону
+«от 100 млн до 1 млрд руб.». Размер обеспечения заявки — 28 594 195,50 руб.
+Предусмотрен аванс в размере 30 %.
+```
+
+What each step buys, since none of it is cosmetic:
+
+* **Sentences, not `Label: value`.** The passage is what gets embedded; a form
+  field gives the model far less signal than a clause does.
+* **Case folding.** `КОМИТЕТ РЕСПУБЛИКИ АДЫГЕЯ ПО РЕГУЛИРОВАНИЮ` →
+  `Комитет республики Адыгея по регулированию`, keeping known abbreviations
+  (`ГБУЗ`, `ФГБОУ`), short acronyms and region names. Deliberately conservative:
+  an all-caps token of four letters or fewer is assumed to be an acronym and left
+  alone, because a shouted word is merely ugly while a lower-cased acronym is no
+  longer recognisable. The cost is the occasional mangled long acronym (`АРЦСМП`
+  → `Арцсмп`).
+* **Rounded glosses and price bands.** Queries say «закупка примерно на
+  полмиллиарда», never «571883910.00», so both the exact amount and
+  `около 571,9 млн руб.` are in the text.
+* **Region codes resolved to names.** `zakupkihack` ships only `region_code`;
+  without the lookup the whole dump is unsearchable by region.
+* **Cross-field deduplication.** The three text columns are frequently the same
+  sentence. Three copies in one passage teach a retriever nothing and inflate
+  every similarity score computed over the corpus.
+* **Facet-heavy titles.** `arqg.index` prepends the title to a passage before
+  embedding it, so the title is the one place where the document's facets reach
+  *every* chunk — including the ones that never mention the customer or the year.
+
+### Metadata
+
+Two levels, because the split matters for size: repeating the document's
+provenance on every chunk made the sidecar twice as large as the corpus.
+
+`*_meta.jsonl`, one per chunk — what a query filters and reranks on:
+
+```json
+{"chunk_id": "eisProcurement_0173200001425000400.txt::3", "index": 3,
+ "section": "Цена контракта и обеспечение", "n_chars": 268,
+ "purchase_number": "0173200001425000400", "year": "2020",
+ "source_url": "https://zakupki.gov.ru/epz/order/notice/view/common-info.html?regNumber=…",
+ "region": "Нижегородская область", "region_code": "52", "law": "44-ФЗ",
+ "procedure": "Электронный аукцион", "customer": "Администрация …",
+ "customer_inn": "5208002260", "price_start": "571883910.00",
+ "price_bucket": "от 100 млн до 1 млрд руб.", "phase": "Признана несостоявшейся",
+ "datasets": ["kaggle_biggest"]}
+```
+
+`*_documents.jsonl`, one per document — the paths, plus everything else:
+
+```json
+{"document_id": "0173200001425000400", "n_chunks": 5,
+ "chunk_ids": ["…::0", "…::1", …], "keywords": ["44-ФЗ", "Нижегородская область", …],
+ "sources": [{"dataset": "kaggle_biggest", "licence": "ODC PDDL (public domain)",
+              "origin": "kaggle.com/datasets/dadalyndell/…",
+              "path": "data/zakupki/tender_data.csv", "locator": "row 0"}]}
+```
+
+So every chunk can be traced to the row of the file it was read from, to the
+dataset and licence that row came under, and to the document's page on the
+portal — `source_url` is rebuilt from the registry number, so it survives
+whichever dump happened to carry the record.
+
 **What you give up.** These are *record cards, not documents*: a row carries the
 notification's key fields, not its text, so it renders as three to five short
 sections where a real XML document gives a dozen. Chunks are ~180-270 characters

@@ -27,11 +27,14 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator
 
 from ..utils import log
-from .parse import ProcurementDoc, Section
+from .facets import Facets, SourceRef, make_facets
+from .normalize import clean_text, parse_date, split_items
+from .parse import ProcurementDoc
 
 csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
 
-#: canonical field -> label used in the rendered section
+#: canonical field -> what it means. These are the names usable in ``--column``;
+#: :func:`row_to_facets` maps them onto :class:`~arqg.zakupki.facets.Facets`.
 FIELD_LABELS: dict[str, str] = {
     "doc_id": "Номер закупки",
     "doc_number": "Номер документа",
@@ -63,22 +66,9 @@ FIELD_LABELS: dict[str, str] = {
     "trade_date": "Дата проведения процедуры",
 }
 
-#: section title -> canonical fields, in the order they should be rendered
-SECTION_SPEC: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Общие сведения", ("doc_id", "doc_number", "published", "law", "procedure",
-                        "trade_date", "url")),
-    ("Объект закупки", ("subject", "lot_name", "okpd2_code", "okpd2_name",
-                        "item_description")),
-    ("Сведения о заказчике", ("customer", "customer_inn", "customer_region",
-                              "region_code", "sponsor")),
-    ("Цена и обеспечение", ("price_start", "currency", "security", "advance",
-                            "small_business")),
-    ("Результаты определения поставщика", ("phase", "winner", "winner_inn",
-                                           "price_final", "contract_date",
-                                           "contract_url")),
-)
-
-MONEY_FIELDS = {"price_start", "price_final", "security"}
+#: canonical field -> Facets attribute, where the names differ
+_TO_FACET = {"doc_id": "purchase_number", "customer_region": "region"}
+DATE_FIELDS = ("published", "trade_date", "contract_date")
 
 
 @dataclass
@@ -211,99 +201,79 @@ def _header(path: str, profile: TableProfile) -> set[str]:
 
 
 # --------------------------------------------------------------------------- #
-# rendering
+# row -> facets
 # --------------------------------------------------------------------------- #
-_NUM_RE = re.compile(r"^-?\d+(?:[.,]\d+)?$")
-_TS_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?")
-_LAWS = {"44fz": "44-ФЗ", "223fz": "223-ФЗ"}
+_LAWS = {"44fz": "44-ФЗ", "223fz": "223-ФЗ", "44": "44-ФЗ", "223": "223-ФЗ"}
 
 
-def _clean(value: Any) -> str:
-    if value is None:
-        return ""
-    text = " ".join(str(value).split())
-    return "" if text.lower() in ("", "nan", "none", "null", "-") else text
-
-
-def _format(field_name: str, value: Any) -> str:
-    text = _clean(value)
-    if not text:
-        return ""
-    if field_name == "law":
-        return _LAWS.get(text.lower(), text)
-    if text.upper() in ("TRUE", "FALSE"):
-        return "да" if text.upper() == "TRUE" else "нет"
-    m = _TS_RE.match(text)
-    if m and field_name in ("published", "contract_date", "trade_date"):
-        y, mo, d, hh, mm = m.groups()
-        return f"{d}.{mo}.{y}" + (f" {hh}:{mm}" if hh else "")
-    if field_name in MONEY_FIELDS and _NUM_RE.match(text.replace(" ", "")):
-        num = float(text.replace(" ", "").replace(",", "."))
-        whole, frac = f"{num:,.2f}".split(".")
-        return f"{whole.replace(',', ' ')},{frac} руб."
-    return text
-
-
-def row_to_doc(row: dict[str, Any], profile: TableProfile,
-               index: int = 0) -> ProcurementDoc | None:
-    """One dump row -> a :class:`ProcurementDoc` with the usual sections."""
-    values = {canon: _format(canon, row.get(col))
-              for canon, col in profile.columns.items()}
-    values = {k: v for k, v in values.items() if v}
+def row_to_facets(row: dict[str, Any], profile: TableProfile, *,
+                  path: str = "", index: int = 0) -> Facets | None:
+    """One dump row -> normalised :class:`Facets`, or ``None`` if it is blank."""
+    values: dict[str, str] = {}
+    for canon, column in profile.columns.items():
+        text = clean_text(row.get(column))
+        if text:
+            values[canon] = text
     if not values:
         return None
 
-    # Resolve the procurement number before rendering: it goes into the text as
-    # well as the file name, and a dump whose id column is broken would collapse
-    # thousands of distinct rows onto one document id.
-    recovered = ""
+    # Resolve the procurement number first: it is the merge key, the file name
+    # and the portal URL. A dump whose id column is broken collapses thousands of
+    # distinct rows onto one document, which is why the profile may point us at
+    # another column to recover it from.
     if profile.doc_id_from:
         m = re.search(profile.doc_id_regex, values.get(profile.doc_id_from, ""))
-        recovered = m.group(1) if m else ""
-    if recovered:
-        values["doc_id"] = recovered
-    doc_id = re.sub(r"[^\w.-]+", "_", values.get("doc_id", ""))[:80] or f"row{index:08d}"
-    values.setdefault("doc_id", doc_id)
+        if m:
+            values["doc_id"] = m.group(1)
+    values["doc_id"] = re.sub(r"[^\w.-]+", "_", values.get("doc_id", ""))[:80]
 
-    sections: list[Section] = []
-    for title, fields in SECTION_SPEC:
-        lines = [f"{FIELD_LABELS.get(f, f)}: {values[f]}" for f in fields if f in values]
-        if lines:
-            sections.append(Section(title, lines))
-    if not sections:
-        return None
+    if "law" in values:
+        values["law"] = _LAWS.get(values["law"].lower(), values["law"])
+    for name in DATE_FIELDS:
+        if name in values:
+            iso, long = parse_date(values[name])
+            values[name] = iso
+            if long:
+                values[f"{name}_long"] = long
+    if "small_business" in values:
+        flag = values["small_business"].upper()
+        values["small_business"] = "да" if flag in ("TRUE", "1", "ДА") else "нет"
+    items = split_items(values.pop("item_description", ""))
 
-    subject = values.get("subject") or values.get("lot_name") or ""
-    title = f"Карточка закупки № {doc_id}"
-    if subject:
-        title = f"{title}. {subject[:180]}"
+    facets = make_facets(
+        {_TO_FACET.get(k, k): v for k, v in values.items()},
+        SourceRef(dataset=profile.name, origin=profile.source, licence=profile.licence,
+                  path=path, locator=f"row {index}"))
+    facets.items = items
+    if not facets.purchase_number:
+        facets.purchase_number = f"{profile.name}_row{index:08d}"
+    return facets
 
-    return ProcurementDoc(
-        doc_type=profile.doc_type, doc_id=doc_id, title=title, sections=sections,
-        file_ext=".txt",           # rendered from a table, not an EIS XML document
-        meta={"source": profile.source, "licence": profile.licence,
-              "profile": profile.name,
-              "purchase_number": values.get("doc_id", ""),
-              "published": values.get("published", ""),
-              "customer": values.get("customer", ""),
-              "subject": subject})
+
+def iter_facets(path: str, profile: TableProfile, *,
+                limit: int = 0) -> Iterator[Facets]:
+    """Read a dump file into normalised facets, skipping rows with nothing in them."""
+    n_rows = n_ok = 0
+    for i, row in enumerate(read_rows(path, profile)):
+        n_rows += 1
+        facets = row_to_facets(row, profile, path=path, index=i)
+        if facets is None or facets.is_empty():
+            continue
+        n_ok += 1
+        yield facets
+        if limit and n_ok >= limit:
+            break
+    log.info("zakupki: %s -> %d records from %d rows (%s)",
+             os.path.basename(path), n_ok, n_rows, profile.name)
 
 
 def iter_docs(path: str, profile: TableProfile, *,
               limit: int = 0) -> Iterator[ProcurementDoc]:
-    """Parse a dump file into documents, skipping rows with nothing in them."""
-    n_rows = n_docs = 0
-    for i, row in enumerate(read_rows(path, profile)):
-        n_rows += 1
-        doc = row_to_doc(row, profile, i)
-        if doc is None:
-            continue
-        n_docs += 1
-        yield doc
-        if limit and n_docs >= limit:
-            break
-    log.info("zakupki: %s -> %d documents from %d rows (%s)",
-             os.path.basename(path), n_docs, n_rows, profile.name)
+    """Dump file -> documents, for building a corpus from a single source."""
+    for facets in iter_facets(path, profile, limit=limit):
+        doc = facets.to_doc(profile.doc_type)
+        if doc is not None:
+            yield doc
 
 
 def parse_column_overrides(pairs: Iterable[str]) -> dict[str, str]:

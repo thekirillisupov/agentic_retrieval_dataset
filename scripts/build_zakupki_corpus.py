@@ -67,6 +67,7 @@ from arqg.utils import append_jsonl, ensure_parent, log, read_jsonl, setup_loggi
 from arqg.zakupki.client import (BASE_URL, DEFAULT_DOCUMENT_TYPES, SERVICES, SUBSYSTEMS,
                                  EisClient, EisConfig, EisError)
 from arqg.zakupki.corpus import ChunkOptions, build_corpus, duplicate_report, write_report
+from arqg.zakupki.merge import SourceSpec, build_merged, write_manifest
 from arqg.zakupki.parse import parse_path
 from arqg.zakupki.tabular import (PROFILES, detect_profile, iter_docs,
                                   parse_column_overrides)
@@ -272,6 +273,69 @@ def cmd_from_table(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- #
+# merge
+# --------------------------------------------------------------------------- #
+def _resolve_source(spec: str, overrides: list[str], delimiter: str) -> SourceSpec:
+    """``path[:profile[:limit]]`` -> a SourceSpec, detecting the profile if omitted."""
+    parts = spec.split(":")
+    path = parts[0]
+    # a Windows drive letter or a URL-ish path would break the naive split
+    if len(parts) > 1 and not os.path.exists(path) and os.path.exists(spec):
+        path, parts = spec, [spec]
+    if not os.path.exists(path):
+        raise SystemExit(f"no such file: {path}")
+    name = parts[1] if len(parts) > 1 and parts[1] else "auto"
+    limit = int(parts[2]) if len(parts) > 2 and parts[2] else 0
+
+    profile = detect_profile(path) if name == "auto" else PROFILES.get(name)
+    if profile is None:
+        raise SystemExit(
+            f"could not recognise {path}; name a profile as <path>:<profile> "
+            f"(known: {', '.join(sorted(PROFILES))})")
+    if overrides:
+        profile = replace(profile, columns={**profile.columns,
+                                            **parse_column_overrides(overrides)})
+    if delimiter:
+        profile = replace(profile, delimiter=delimiter)
+    return SourceSpec(path=path, profile=profile, limit=limit)
+
+
+def cmd_merge(args: argparse.Namespace) -> int:
+    """Fold every available dump into one corpus with a metadata sidecar."""
+    specs = [_resolve_source(s, args.column, args.delimiter) for s in args.input]
+    for spec in specs:
+        log.info("zakupki: source %s — %s (licence: %s%s)", spec.profile.name,
+                 spec.path, spec.profile.licence,
+                 f", limit {spec.limit}" if spec.limit else "")
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    corpus_path = args.corpus or os.path.join(args.out_dir, f"{args.name}.jsonl")
+    meta_path = "" if args.no_meta else os.path.join(args.out_dir, f"{args.name}_meta.jsonl")
+    docs_path = "" if args.no_meta else os.path.join(args.out_dir, f"{args.name}_documents.jsonl")
+    manifest_path = os.path.join(args.out_dir, f"{args.name}_manifest.json")
+    report_path = os.path.join(args.out_dir, f"{args.name}_report.json")
+
+    opts = ChunkOptions(max_chars=args.max_chars, merge_below=args.merge_below,
+                        min_chars=args.min_chars,
+                        max_chunks_per_doc=args.max_chunks_per_doc)
+    stats = build_merged(specs, corpus_path, meta_path=meta_path,
+                         docs_path=docs_path, opts=opts)
+    if not stats["n_chunks"]:
+        log.error("no chunks produced")
+        return 1
+
+    write_manifest(manifest_path, specs, stats, corpus_path, meta_path)
+    report = {"corpus": corpus_path, "metadata": meta_path, **stats,
+              **duplicate_report(read_jsonl(corpus_path), examples=args.examples)}
+    write_report(report, report_path)
+    _print_report(report)
+    if meta_path:
+        print(f"метаданные (чанки):    {meta_path}")
+        print(f"метаданные (документы):{docs_path}")
+    return 0
+
+
 def _warn_thin_documents(records: list[dict]) -> None:
     """Windows need ≥2 chunks in a file; say so loudly if most rows give one."""
     per_file: dict[str, int] = {}
@@ -288,8 +352,8 @@ def cmd_stats(args: argparse.Namespace) -> int:
     if not os.path.exists(args.corpus):
         log.error("no such corpus: %s", args.corpus)
         return 2
-    records = list(read_jsonl(args.corpus))
-    report = {"corpus": args.corpus, **duplicate_report(records, examples=args.examples)}
+    report = {"corpus": args.corpus,
+              **duplicate_report(read_jsonl(args.corpus), examples=args.examples)}
     if args.report:
         write_report(report, args.report)
     _print_report(report)
@@ -423,6 +487,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     t.add_argument("--max-chunks-per-doc", type=int, default=40)
     t.add_argument("--examples", type=int, default=5)
 
+    # ---- merge ---- #
+    m = sub.add_parser("merge", parents=[common],
+                       help="fold several dumps into ONE corpus + metadata sidecar")
+    m.add_argument("--input", action="append", required=True, metavar="PATH[:PROFILE[:LIMIT]]",
+                   help="a dump to include; repeat for each. PROFILE defaults to "
+                        "auto-detection, LIMIT caps the rows taken from that file")
+    m.add_argument("--name", default="zakupki", help="base name for the output files")
+    m.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
+    m.add_argument("--corpus", default="")
+    m.add_argument("--no-meta", action="store_true",
+                   help="skip both metadata sidecars")
+    m.add_argument("--column", action="append", default=[], metavar="CANON=COLUMN",
+                   help="column overrides applied to every source")
+    m.add_argument("--delimiter", default="")
+    m.add_argument("--max-chars", type=int, default=1400)
+    m.add_argument("--merge-below", type=int, default=0)
+    m.add_argument("--min-chars", type=int, default=40)
+    m.add_argument("--max-chunks-per-doc", type=int, default=40)
+    m.add_argument("--examples", type=int, default=5)
+
     # ---- stats ---- #
     s = sub.add_parser("stats", parents=[common], help="near-duplicate report over an existing corpus")
     s.add_argument("--corpus", default=os.path.join(DEFAULT_OUT_DIR, "zakupki_index.jsonl"))
@@ -447,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     setup_logging(args.log_level)
     return {"fetch": cmd_fetch, "build": cmd_build, "from-table": cmd_from_table,
-            "stats": cmd_stats, "xsd": cmd_xsd}[args.command](args)
+            "merge": cmd_merge, "stats": cmd_stats, "xsd": cmd_xsd}[args.command](args)
 
 
 if __name__ == "__main__":
