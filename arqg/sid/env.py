@@ -43,11 +43,14 @@ class Env:
         await self.embedder.aclose()
 
 
-async def build_env(cfg: SidConfig, *, version: str = "v0",
-                    embedder: BaseEmbedder | None = None) -> Env:
-    corpus = load_corpus(cfg, with_injections=(version != "v0"))
-    corpus.version = version
-    emb = embedder or make_embedder(cfg.embed)
+async def build_dense_for(cfg: SidConfig, corpus: SidCorpus, version: str,
+                          embedder: BaseEmbedder) -> DenseIndex:
+    """The dense index of one corpus version, cached on disk.
+
+    Split out of ``build_env`` because S1 wants the embeddings without the rest
+    of the environment, and it has to hit the *same* cache: the signature is
+    what makes the mining stage and the gates share one embedding bill.
+    """
     chunks = corpus.all_chunks()
     signature = {
         "model": cfg.embed.model,
@@ -57,10 +60,18 @@ async def build_env(cfg: SidConfig, *, version: str = "v0",
         "corpus": os.path.abspath(cfg.paths.corpus),
         "checksum": corpus.checksum(),
     }
-    dense = await build_dense(
-        emb, [c.id for c in chunks],
+    return await build_dense(
+        embedder, [c.id for c in chunks],
         [_passage_text(c, cfg.embed.embed_with_title) for c in chunks],
         cfg.paths.dense_dir(version), signature, rebuild=cfg.embed.rebuild_index)
+
+
+async def build_env(cfg: SidConfig, *, version: str = "v0",
+                    embedder: BaseEmbedder | None = None) -> Env:
+    corpus = load_corpus(cfg, with_injections=(version != "v0"))
+    corpus.version = version
+    emb = embedder or make_embedder(cfg.embed)
+    dense = await build_dense_for(cfg, corpus, version, emb)
     bm25 = build_bm25(corpus)
     searcher = HybridSearcher(bm25, dense, emb, rrf_k=cfg.rrf_k,
                               candidates=cfg.fusion_candidates)

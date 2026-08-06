@@ -35,6 +35,7 @@ from typing import Any
 from ..utils import ensure_parent, log, write_jsonl
 from .config import SidConfig
 from .retrieval import gap_bin
+from .sections import shared_depth
 
 _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 
@@ -98,6 +99,7 @@ def finalize_record(cfg: SidConfig, rec: dict) -> dict:
     cx["in_lexicon_arm"] = (gap_bin(float(cx.get("lex_gap", 1.0)), bins) == "high"
                             and cx["fused_gap_bin"] == "high")
     groups = rec.get("fact_groups", [[c] for c in rec["gold_chunk_ids"]])
+    sections = [f.get("section", "") for f in rec.get("facts", []) if f.get("section")]
     return {
         "task_id": rec["task_id"],
         "corpus": rec["corpus"],
@@ -113,7 +115,9 @@ def finalize_record(cfg: SidConfig, rec: dict) -> dict:
         "metrics": rec.get("metrics", {}),
         "provenance": {**rec.get("provenance", {}),
                        "facts": [f["fact_id"] for f in rec.get("facts", [])],
-                       "fact_group_sizes": [len(g) for g in groups]},
+                       "fact_group_sizes": [len(g) for g in groups],
+                       "sections": sorted(set(sections)),
+                       "section_shared_depth": shared_depth(sections)},
     }
 
 
@@ -171,6 +175,10 @@ def datamix_stats(tasks: list[dict]) -> dict[str, Any]:
     mean_mech = st.mean(mech.values()) if mech else 0
     fused_bins = tally(lambda t: t["complexity"]["fused_gap_bin"])
     n_inj = sum(1 for t in tasks if t["distractors"].get("injected"))
+    prov = [t.get("provenance", {}) for t in tasks]
+    depths = [p.get("section_shared_depth", 0) for p in prov]
+    root_only = sum(1 for d in depths if d <= 1)
+    multi_section = sum(1 for p in prov if len(p.get("sections", [])) > 1)
     levels: Counter = Counter()
     types: Counter = Counter()
     for t in tasks:
@@ -212,6 +220,24 @@ def datamix_stats(tasks: list[dict]) -> dict[str, Any]:
                           "B_i counted in groups, or the metric penalises a rollout "
                           "that returned an equally valid group member"),
         },
+        "sections": {
+            # How topically coherent the gold sets are, read off the `title`
+            # breadcrumb. `share_root_only` is the pathology S1's section
+            # scoping exists to remove: a gold set whose fragments share nothing
+            # but the corpus root was bridged by a coincidence, and the composer
+            # has to invent the link. Mined globally this corpus produced 51%;
+            # a non-trivial share here means scoping is not reaching the pool.
+            "share_root_only": round(root_only / n, 4),
+            "share_multi_section": round(multi_section / n, 4),
+            "shared_depth_median": round(st.median(depths), 1) if depths else 0,
+            "shared_depth": dict(Counter(str(d) for d in depths)),
+        },
+        # Which S1 channel the surviving tasks came from. The doc2doc channel
+        # exists to reach folders no repeated surface form bridges, so its share
+        # here against its share of the mined pool is what says whether those
+        # folders produce tasks or only candidates.
+        "bridge_kind": dict(Counter(t.get("provenance", {}).get("bridge_kind", "entity")
+                                    for t in tasks)),
         "distractors": {
             "tasks_with_injection": n_inj,
             "share_tasks_with_injection": round(n_inj / n, 4),

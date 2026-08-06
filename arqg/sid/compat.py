@@ -19,6 +19,7 @@ from typing import Any
 from ..utils import ensure_parent, log
 from .config import SidConfig
 from .corpus import SidCorpus
+from .sections import depth as section_depth, scope_of
 
 _SENT_END = ".!?…»\"'"
 
@@ -73,18 +74,35 @@ def build_compat_report(cfg: SidConfig, corpus: SidCorpus, sample: int = 200) ->
 def build_index_fields(corpus: SidCorpus) -> dict[str, Any]:
     """§2.2 — what the miner and search filters may key on."""
     has_doc_id = sum(1 for c in corpus.all_chunks() if c.document_id)
-    has_title = sum(1 for c in corpus.all_chunks() if c.title)
+    titled = [c.title for c in corpus.all_chunks() if c.title]
     n = max(1, len(corpus))
+    breadcrumbs = [t for t in titled if section_depth(t) > 1]
+    depths = sorted(section_depth(t) for t in breadcrumbs)
+    scopes = {scope_of(t, gap=1) for t in breadcrumbs}
+    scopes.discard("")
     return {
         "chunk_id": {"format": "{file_name}::{index}", "coverage": 1.0},
         "file_name": {"role": "document handle / doc_type proxy", "coverage": 1.0},
-        "index": {"role": "position in document", "coverage": 1.0},
+        "index": {"role": "position in document; same-document distance",
+                  "coverage": 1.0},
         "document_id": {"role": "logical document", "coverage": round(has_doc_id / n, 4)},
-        "title": {"role": "section/document title", "coverage": round(has_title / n, 4)},
+        "title": {
+            "role": "breadcrumb path — S1 mines within a folder of it"
+                    if breadcrumbs else "section/document title",
+            "coverage": round(len(titled) / n, 4),
+            "share_breadcrumb": round(len(breadcrumbs) / n, 4),
+            "median_depth": depths[len(depths) // 2] if depths else 0,
+            "n_scopes_at_gap_1": len(scopes),
+        },
         "notes": [
             "date / ACL / doc_type tags are not present in this corpus; "
-            "temporal_resolution therefore relies on dates extracted from text, "
-            "and index-tag anchors fall back to file_name.",
+            "temporal_resolution therefore relies on dates extracted from text.",
+            ("title is a path, not a headline: it is the section anchor S1 scopes "
+             "on (see sections.py). It is NOT registered as an entity-graph tag — "
+             "that would bypass tau_idf and make every folder sibling a bridge."
+             if breadcrumbs else
+             "title is a flat name, not a path: S1 falls back to the unscoped "
+             "global entity search."),
         ],
     }
 

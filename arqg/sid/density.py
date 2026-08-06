@@ -36,6 +36,7 @@ import numpy as np
 
 from ..utils import ensure_parent, log
 from .config import SidConfig
+from .dense import pairwise_sample
 from .env import Env
 
 
@@ -71,18 +72,6 @@ class DensityModel:
         }
 
 
-def _pairwise_sample(env: Env, n: int, seed: int) -> np.ndarray:
-    ids = env.dense.ids
-    if len(ids) < 2:
-        return np.zeros(0, dtype="float32")
-    rng = random.Random(seed)
-    pick = rng.sample(range(len(ids)), min(n, len(ids)))
-    mat = env.dense.matrix[pick]
-    sims = mat @ mat.T
-    iu = np.triu_indices(len(pick), k=1)
-    return sims[iu]
-
-
 def density_of(env: Env, chunk_id: str, tau: float, exclude: set[str]) -> int:
     vec = env.dense.vec(chunk_id)
     if vec is None:
@@ -107,7 +96,7 @@ def task_density(env: Env, gold: list[str], tau: float) -> int:
 def fit_density_model(cfg: SidConfig, env: Env,
                       reach_task_golds: list[list[str]] | None = None) -> DensityModel:
     d = cfg.density
-    sims = _pairwise_sample(env, d.sample_chunks, d.seed)
+    sims = pairwise_sample(env.dense, d.sample_chunks, d.seed)
     if sims.size == 0:
         return DensityModel(tau_sim=1.0, tau_low=1.0, density_median_all=0.0)
 

@@ -23,7 +23,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..llm import BaseLLM
+from ..llm import BaseLLM, LLMConnectionError
 from ..utils import append_jsonl, load_done_keys, log, read_jsonl
 from .config import SidConfig
 from .env import Env
@@ -150,9 +150,17 @@ async def remeasure(cfg: SidConfig, env: Env, rec: dict) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 async def g_solve(cfg: SidConfig, judge: BaseLLM, question: str, answer: str,
                   facts: list[dict], stats: GateStats | None = None) -> tuple[bool, str, bool]:
-    """Returns (passed, reason, dual_critic_agreement)."""
+    """Returns (passed, reason, dual_critic_agreement).
+
+    Raises `LLMConnectionError` as-is rather than turning it into a verdict:
+    the critic being unreachable is not the same claim as the critic having
+    looked at the question and found it unsolvable, and the caller needs to
+    tell them apart to avoid permanently rejecting a candidate over a network
+    blip."""
     try:
         v = await judge.complete_json(SOLVE_SYS, solve_user(question, answer, facts))
+    except LLMConnectionError:
+        raise
     except Exception as e:                                  # noqa: BLE001
         return False, f"critic error: {e}", True
 
@@ -306,8 +314,20 @@ async def run_gates(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM,
                     candidates: list[Candidate]) -> list[dict]:
     stats = GateStats()
     seen = load_done_keys(cfg.paths.gate_decisions, "candidate_id")
-    todo = [c for c in candidates if c.candidate_id not in seen]
-    log.info("S4: %d candidates to gate (%d already decided)", len(todo), len(seen))
+    # Winners of a previous run that never made it past G_SOLVE (e.g. the
+    # embedding backend and the LLM gateway are reachable over two different
+    # network paths and only one was up) are cached by candidate_id, so this
+    # run does not have to repeat their (embedding-only) cheap gates.
+    id_to_cand = {c.candidate_id: c for c in candidates}
+    cached_winners: list[tuple[Candidate, dict]] = [
+        (id_to_cand[r["candidate_id"]], r["res"])
+        for r in read_jsonl(cfg.paths.gate_winners)
+        if r["candidate_id"] not in seen and r["candidate_id"] in id_to_cand]
+    cached_ids = {c.candidate_id for c, _ in cached_winners}
+    todo = [c for c in candidates
+            if c.candidate_id not in seen and c.candidate_id not in cached_ids]
+    log.info("S4: %d candidates to cheap-gate (%d already decided, %d cached "
+             "winners awaiting G_SOLVE)", len(todo), len(seen), len(cached_ids))
     decisions = cfg.paths.gate_decisions
 
     # ---- cheap gates on everything, then 1-of-N selection ----------------- #
@@ -330,38 +350,55 @@ async def run_gates(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM,
                 continue
         survivors.append((cand, res))
 
-    winners = _pick_batch_winners(cfg, survivors)
-    won = {c.candidate_id for c, _ in winners}
+    new_winners = _pick_batch_winners(cfg, survivors)
+    won = {c.candidate_id for c, _ in new_winners}
     for cand, _ in survivors:
         if cand.candidate_id not in won:
             # its batch already produced a winner; resurrecting it later would
             # defeat the point of 1-of-N selection
             _decide(decisions, "candidate_id", cand.candidate_id, "not_selected_1_of_N")
-    log.info("S4: cheap gates kept %d/%d; 1-of-N selection kept %d",
-             len(survivors), len(todo), len(winners))
+    for cand, res in new_winners:
+        append_jsonl(cfg.paths.gate_winners, {"candidate_id": cand.candidate_id, "res": res})
+    winners = cached_winners + new_winners
+    log.info("S4: cheap gates kept %d/%d; 1-of-N selection kept %d new (+%d cached) "
+             "= %d awaiting G_SOLVE", len(survivors), len(todo), len(new_winners),
+             len(cached_winners), len(winners))
 
     # ---- expensive gate: G_SOLVE with a bounded repair loop --------------- #
+    deferred = 0
+
     async def solve_stage(cand: Candidate, res: dict) -> dict | None:
-        for attempt in range(1, max(1, cfg.compose.max_compose_iters) + 1):
-            ok, reason, agreement = await g_solve(cfg, judge, cand.question,
-                                                  cand.answer, cand.facts, stats)
-            stats.record("G_SOLVE", cand.mechanic, ok)
-            if ok:
-                return _to_record(cfg, cand, res, agreement)
-            if attempt >= cfg.compose.max_compose_iters:
-                break
-            # feed the critic's objection back to the composer instead of
-            # discarding the subgraph: the facts are fine, the phrasing is not
-            repaired = await recompose(cfg, gen, cand, reason, attempt + 1)
-            if repaired is None:
-                break
-            cand = repaired
-            res = await cheap_gates(cfg, env, cand)      # the question changed
-            if not (res["broad_ok"] and res["reach_ok"]):
-                _decide(decisions, "candidate_id", cand.candidate_id,
-                        "rejected_after_repair",
-                        reason="broad" if not res["broad_ok"] else "reach")
-                return None
+        nonlocal deferred
+        try:
+            for attempt in range(1, max(1, cfg.compose.max_compose_iters) + 1):
+                ok, reason, agreement = await g_solve(cfg, judge, cand.question,
+                                                      cand.answer, cand.facts, stats)
+                stats.record("G_SOLVE", cand.mechanic, ok)
+                if ok:
+                    return _to_record(cfg, cand, res, agreement)
+                if attempt >= cfg.compose.max_compose_iters:
+                    break
+                # feed the critic's objection back to the composer instead of
+                # discarding the subgraph: the facts are fine, the phrasing is not
+                repaired = await recompose(cfg, gen, cand, reason, attempt + 1)
+                if repaired is None:
+                    break
+                cand = repaired
+                res = await cheap_gates(cfg, env, cand)      # the question changed
+                if not (res["broad_ok"] and res["reach_ok"]):
+                    _decide(decisions, "candidate_id", cand.candidate_id,
+                            "rejected_after_repair",
+                            reason="broad" if not res["broad_ok"] else "reach")
+                    return None
+        except LLMConnectionError as e:
+            # the judge/generator was unreachable, not "the critic said no" —
+            # leave this candidate undecided (it stays cached in gate_winners,
+            # not gate_decisions) so a later run retries G_SOLVE for it instead
+            # of losing it permanently to what may be a one-sided network path
+            deferred += 1
+            log.warning("S4: G_SOLVE deferred for %s — judge unreachable: %r",
+                        cand.candidate_id, e)
+            return None
         log.debug("S4: G_SOLVE rejected %s — %s", cand.candidate_id, reason)
         _decide(decisions, "candidate_id", cand.candidate_id,
                 "rejected_G_SOLVE", reason=reason[:200])
@@ -376,7 +413,8 @@ async def run_gates(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM,
 
     _dump_stats(cfg, stats)
     all_records = list(read_jsonl(cfg.paths.gated))
-    log.info("S4: %d candidates passed G_BROAD/G_REACH/G_SOLVE", len(all_records))
+    log.info("S4: %d candidates passed G_BROAD/G_REACH/G_SOLVE (%d deferred, "
+             "judge unreachable — rerun to retry them)", len(all_records), deferred)
     return all_records
 
 
@@ -407,6 +445,7 @@ def _to_record(cfg: SidConfig, cand: Candidate, res: dict, agreement: bool) -> d
         "metrics": res["metrics"],
         "provenance": {
             "subgraph_id": cand.subgraph_id,
+            "bridge_kind": cand.bridge_kind,
             "instantiation_rank": cand.instantiation_rank,
             "compose_iters": cand.compose_iters,
             "gates_passed": ["G_BROAD", "G_REACH", "G_SOLVE"],

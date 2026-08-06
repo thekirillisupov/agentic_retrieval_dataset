@@ -4,7 +4,7 @@
 Stages (each reads/writes JSONL and resumes independently):
 
     compat     S0  index/unit compatibility, available fields, v0 manifest
-    mine       S1  entity ↔ chunk subgraphs (rare bridging entities)
+    mine       S1  entity ↔ chunk subgraphs, + doc2doc pairs if sim_bridge is on
     facts      S3  atomic facts with verbatim spans
     compose    S3  1-of-N question composition per coverage cell
     gates      S4  G_BROAD + G_REACH (retrieval-only) then G_SOLVE
@@ -66,7 +66,7 @@ def main() -> None:
     if args.stage == "compat":
         run_compat(cfg)
     elif args.stage == "mine":
-        run_mining(cfg)
+        asyncio.run(run_mining(cfg))
     elif args.stage == "facts":
         asyncio.run(pipeline.stage_facts(cfg))
     elif args.stage == "compose":

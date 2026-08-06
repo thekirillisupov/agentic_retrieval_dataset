@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 
 import numpy as np
 
@@ -94,6 +95,24 @@ class DenseIndex:
             if v is not None:
                 out[c] = float(np.dot(v, qvec))
         return out
+
+
+def pairwise_sample(dense: DenseIndex, n: int, seed: int) -> np.ndarray:
+    """Cosines of a random sample of chunk pairs.
+
+    The empirical distribution every similarity threshold in the pipeline is a
+    percentile of — τ_sim and τ_low in §7.1, the doc2doc band in S1 — so they
+    are all read off the same sample rather than each stage drawing its own.
+    """
+    ids = dense.ids
+    if len(ids) < 2:
+        return np.zeros(0, dtype="float32")
+    rng = random.Random(seed)
+    pick = rng.sample(range(len(ids)), min(n, len(ids)))
+    mat = dense.matrix[pick]
+    sims = mat @ mat.T
+    iu = np.triu_indices(len(pick), k=1)
+    return sims[iu]
 
 
 async def build_dense(embedder: BaseEmbedder, ids: list[str], texts: list[str],

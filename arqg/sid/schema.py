@@ -30,6 +30,18 @@ class Subgraph:
     bridge_entities: list[dict[str, Any]]
     index_tags: dict[str, Any] = field(default_factory=dict)
     hop_depth_potential: int = 0
+    # the `title` folder the chunks were mined within ("" = mined globally),
+    # and how many leading path segments they actually share. `path_shared_depth
+    # == 1` means "nothing but the corpus root" — the pathology scoping exists
+    # to remove, kept as a measurable rather than an assumption.
+    path_scope: str = ""
+    path_shared_depth: int = 0
+    # which channel found this subgraph: "entity" (a shared rare surface form)
+    # or "similarity" (doc2doc, see simbridge.py). A similarity subgraph may
+    # still list `bridge_entities` — anything its chunks happen to share — but
+    # nothing guaranteed it, which is why S3 re-checks the anchor.
+    bridge_kind: str = "entity"
+    pair_similarity: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -44,6 +56,11 @@ class Fact:
     fact_normalized: str
     entities: list[str] = field(default_factory=list)
     discriminating_attributes: list[str] = field(default_factory=list)
+    # breadcrumb of the source chunk. Carried on the fact rather than looked up
+    # per stage: the fact is what actually travels (facts.jsonl → candidate →
+    # gate repair → task), so the composer and the repair loop get the section
+    # without every one of them having to hold the corpus.
+    section: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -68,6 +85,7 @@ class Candidate:
     compose_iters: int = 1
     generator_model: str = ""
     reasoning: str = ""
+    bridge_kind: str = "entity"         # which S1 channel produced the subgraph
 
     @property
     def chunk_ids(self) -> list[str]:

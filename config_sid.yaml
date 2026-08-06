@@ -69,6 +69,16 @@ mining:
   max_subgraphs_per_file: 6
   target_subgraphs: 2000           # 0 = unlimited
   cross_document_bonus: true
+  # Section scoping: mine within a folder of the `title` breadcrumb instead of
+  # over the whole corpus (arqg/sid/sections.py). Chunks whose title is a flat
+  # name rather than a path fall back to the global search automatically, so
+  # this is a no-op on a corpus without breadcrumbs.
+  path_scope_gap: 1                # 0 = same folder, 1 = one level up, null = off
+  scope_df_ratio: 0.5              # above this share of a folder = its subject
+  max_subgraphs_per_path: 8
+  max_bridge_type_share: 0.5
+  same_doc_min_chunks: 20          # same-document pairs need a navigable document
+  min_index_gap: 8                 # ... and a real gap between the chunks
 
 # --- S2 --------------------------------------------------------------------
 taxonomy:

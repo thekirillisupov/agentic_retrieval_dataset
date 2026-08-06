@@ -57,10 +57,16 @@ class BaseEmbedder:
     async def _embed_batch(self, inputs: list[str]) -> list[list[float]]:
         raise NotImplementedError
 
+    async def _warmup(self) -> None:
+        """Called once before the first batch of a call to `embed`. Backends that
+        need an auth token fetch it here, so a bad key/unreachable auth endpoint
+        fails once with a clear message instead of once per in-flight batch."""
+
     async def embed(self, texts: list[str], kind: str) -> np.ndarray:
         """Embed texts (kind: 'query' | 'passage'); returns normalised vectors."""
         if not texts:
             return np.zeros((0, 0), dtype="float32")
+        await self._warmup()
         inputs = self._format(texts, kind)
         bs = max(1, self.cfg.batch_size)
         batches = [inputs[i:i + bs] for i in range(0, len(inputs), bs)]
@@ -91,9 +97,17 @@ class GigaChatEmbedder(BaseEmbedder):
         verify: object = cfg.verify_ssl
         if cfg.verify_ssl and cfg.ca_bundle:
             verify = cfg.ca_bundle
+        cert: str | tuple[str, str] | None = None
+        if cfg.cert_file and cfg.key_file:
+            cert = (cfg.cert_file, cfg.key_file)
+        elif cfg.cert_file:
+            cert = cfg.cert_file
         self._httpx = httpx
         self._client = httpx.AsyncClient(
-            verify=verify, timeout=httpx.Timeout(cfg.request_timeout))
+            cert=cert, verify=verify, timeout=httpx.Timeout(cfg.request_timeout))
+        # A client cert identifies the caller by itself; no bearer token is
+        # fetched or sent on this path (matches the working `curl --cert --key`).
+        self._mtls = cert is not None
         self._static_token = os.environ.get(cfg.token_env, "").strip()
         self._oauth_token = ""
         self._oauth_exp = 0.0
@@ -160,6 +174,12 @@ class GigaChatEmbedder(BaseEmbedder):
             if not force and self._oauth_still_valid():
                 return self._oauth_token
             auth_key = os.environ.get(self.cfg.auth_key_env, "").strip()
+            # People often export `Bearer <key>` or `Basic <key>`; the header
+            # below already adds the scheme, and a double prefix is a 400.
+            for prefix in ("bearer ", "basic "):
+                if auth_key.lower().startswith(prefix):
+                    auth_key = auth_key[len(prefix):].strip()
+                    break
             if not auth_key:
                 raise EmbeddingsError(
                     f"no token: set ${self.cfg.token_env} (static) or "
@@ -173,7 +193,12 @@ class GigaChatEmbedder(BaseEmbedder):
                 },
                 data={"scope": self.cfg.scope},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                body = (resp.text or "").strip()
+                raise EmbeddingsError(
+                    f"GigaChat OAuth {resp.status_code} from {self.cfg.oauth_url} "
+                    f"(scope={self.cfg.scope!r}, ${self.cfg.auth_key_env} "
+                    f"len={len(auth_key)}): {body or resp.reason_phrase}")
             data = resp.json()
             self._oauth_token = data["access_token"]
             # expires_at is epoch milliseconds
@@ -182,10 +207,22 @@ class GigaChatEmbedder(BaseEmbedder):
             return self._oauth_token
 
     async def _token(self) -> str:
+        if self._mtls:
+            return ""
         if self._static_token:
             return self._static_token
         await self._ensure_refresh_task()
         return await self._fetch_oauth_token()
+
+    async def _warmup(self) -> None:
+        if self._mtls or self._static_token:
+            return
+        try:
+            await self._token()
+        except Exception as e:  # noqa: BLE001
+            raise EmbeddingsError(
+                f"could not obtain a GigaChat OAuth token from {self.cfg.oauth_url} "
+                f"before starting embeddings: {e!r}") from e
 
     async def _embed_batch_split(self, inputs: list[str]) -> list[list[float]]:
         if len(inputs) == 1:
@@ -210,13 +247,15 @@ class GigaChatEmbedder(BaseEmbedder):
             try:
                 token = await self._token()
                 await self._throttle()
+                headers = {"Content-Type": "application/json",
+                           "X-Request-Id": str(uuid.uuid4())}
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
                 resp = await self._client.post(
-                    self.cfg.base_url,
-                    headers={"Authorization": f"Bearer {token}",
-                             "Content-Type": "application/json"},
+                    self.cfg.base_url, headers=headers,
                     json={"model": self.cfg.model, "input": inputs},
                 )
-                if resp.status_code == 401 and not self._static_token:
+                if resp.status_code == 401 and not self._mtls and not self._static_token:
                     self._oauth_token = ""
                     self._oauth_fetched_at = 0.0
                     raise EmbeddingsError("401 unauthorized — refreshing token")
@@ -234,10 +273,10 @@ class GigaChatEmbedder(BaseEmbedder):
             except Exception as e:  # noqa: BLE001
                 last = e
                 delay = self._retry_delay(resp, attempt)
-                log.warning("embeddings call failed (%d/%d): %s — retry in %.1fs",
+                log.warning("embeddings call failed (%d/%d): %r — retry in %.1fs",
                             attempt + 1, self.cfg.max_retries, e, delay)
                 await asyncio.sleep(delay)
-        raise EmbeddingsError(f"embeddings failed after {self.cfg.max_retries} tries: {last}")
+        raise EmbeddingsError(f"embeddings failed after {self.cfg.max_retries} tries: {last!r}")
 
     async def aclose(self) -> None:
         if self._refresh_task is not None:

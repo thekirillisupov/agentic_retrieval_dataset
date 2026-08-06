@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .sections import breadcrumb
 from .taxonomy import MECHANICS
 
 TAG = "[[SID:%s]]"
@@ -18,10 +19,22 @@ def _chunks_block(chunks: list[tuple[str, str]]) -> str:
 
 
 def _facts_block(facts: list[dict[str, Any]]) -> str:
-    return "\n".join(
-        f"- [{f['fact_id']} @ {f['chunk_id']}] {f['fact_normalized']}"
-        f"\n  цитата: «{f['verbatim_span']}»"
-        for f in facts)
+    """Facts with the section each one came from.
+
+    Without the breadcrumb the composer sees two fragments and no reason to
+    believe they are about the same product — this corpus is largely markdown
+    tables whose subject lives in the document title, not in the cells. Given
+    it, "same folder" is visible and the composed link is grounded instead of
+    guessed.
+    """
+    out = []
+    for f in facts:
+        line = (f"- [{f['fact_id']} @ {f['chunk_id']}] {f['fact_normalized']}"
+                f"\n  цитата: «{f['verbatim_span']}»")
+        if f.get("section"):
+            line += f"\n  раздел: {breadcrumb(f['section'])}"
+        out.append(line)
+    return "\n".join(out)
 
 
 # --------------------------------------------------------------------------- #
@@ -37,14 +50,19 @@ FACTS_SYS = (TAG % "facts") + """
 - discriminating_attributes — атрибуты, отличающие факт от похожих: даты, суммы,
   номера, версии, названия. Формат "тип:значение", например "date:2015", "amount:4 млрд".
 - Не выдумывай ничего, чего нет во фрагменте.
+- РАЗДЕЛ — это путь фрагмента в базе знаний. Он говорит, о каком продукте и
+  подразделе идёт речь, и нужен, чтобы fact_normalized был самодостаточен
+  (например «дефект СберБизнеса», а не просто «дефект»). Но РАЗДЕЛ — не источник
+  фактов: verbatim_span обязан быть подстрокой ФРАГМЕНТА, не заголовка.
 
 Ответ — строго JSON: {"facts": [{"verbatim_span": "...", "fact_normalized": "...",
 "entities": ["..."], "discriminating_attributes": ["date:...", "org:..."]}]}
 """
 
 
-def facts_user(chunk_id: str, text: str, max_facts: int) -> str:
-    return (f"Фрагмент [CHUNK {chunk_id}]:\n{text}\n\n"
+def facts_user(chunk_id: str, text: str, max_facts: int, section: str = "") -> str:
+    head = f"РАЗДЕЛ: {breadcrumb(section)}\n\n" if section else ""
+    return (f"{head}Фрагмент [CHUNK {chunk_id}]:\n{text}\n\n"
             f"Извлеки до {max_facts} самых информативных атомарных фактов.")
 
 
@@ -63,6 +81,10 @@ COMPOSE_SYS = (TAG % "compose") + """
    иначе задача решается тривиальным лексическим совпадением.
 5. Ответ короткий и фактический.
 6. Пиши на русском языке, как пишет реальный пользователь, а не как экзаменатор.
+
+У фактов указан «раздел» — путь фрагмента в базе знаний. Он показывает, к какому
+продукту и подразделу относится факт: используй его, чтобы понять, о чём вообще
+идут фрагменты, и чтобы вопрос был самодостаточен.
 
 Ответ — строго JSON: {"question": "...", "answer": "...",
 "used_fact_ids": ["f_..."], "reasoning": "..."}

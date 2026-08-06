@@ -1,0 +1,196 @@
+# SID — synthetic dataset factory for agentic retrieval, run over data/ckr_index.jsonl
+#
+#   export GIGACHAT_AUTH_KEY=...
+#   python run_sid.py all --config config_sid_ckr.yaml
+#
+# Dry run first (no model, no GPU, no API key):
+#   python run_sid.py all --config config_sid_ckr.yaml --backend mock \
+#       --corpus data/ckr_index.jsonl --out-dir out_sid_ckr_dry
+
+corpus_name: ckr
+language: ru
+taxonomy_version: v0.8
+log_level: INFO
+
+paths:
+  corpus: data/ckr_index.jsonl     # v0 index: {"file_name","index","raw_text",...}
+  out_dir: out_sid_ckr
+
+# ---------------------------------------------------------------------------
+# Models. Generator and judge share the corporate mTLS gateway (same as
+# config_musique_dialog.yaml); judge runs colder for deterministic gating.
+# ---------------------------------------------------------------------------
+llm:
+  backend: gateway
+  base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+  cert_file: gigachat/published.pem
+  key_file: gigachat/00CA0001CLLMllm99usr.key
+  verify_ssl: false
+  temperature: 0.7                 # composition wants variety
+  max_tokens: 1536
+  max_concurrency: 4
+  extra_body:
+    top_p: 0.90
+    reasoning: false
+    chat_template_kwargs:
+      enable_thinking: false
+
+judge:
+  backend: gateway
+  base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+  cert_file: gigachat/published.pem
+  key_file: gigachat/00CA0001CLLMllm99usr.key
+  verify_ssl: false
+  temperature: 0.1                 # judging wants determinism
+  max_tokens: 1024
+  max_concurrency: 4
+  extra_body:
+    reasoning: false
+    chat_template_kwargs:
+      enable_thinking: false
+
+# Dense branch of the hybrid retriever. This must be the SAME embedder the agent
+# uses at rollout time — the gates measure against this environment.
+#
+# Same mTLS gateway pattern as `llm`/`judge` above, not the public GigaChat OAuth
+# flow: the internal embeddings host is only reachable over VPN, authenticated by
+# the client cert alone (verified against `curl --cert --key`, no bearer token).
+embed:
+  backend: gigachat                # gigachat | mock
+  model: GigaEmbeddings-3B-2025-09
+  base_url: https://gigachat-ift.sberdevices.delta.sbrf.ru/v1/embeddings
+  cert_file: gigachat/published.pem
+  key_file: gigachat/00CA0001CLLMllm99usr.key
+  verify_ssl: false
+  batch_size: 8
+  max_input_chars: 8192
+  max_concurrency: 1
+  min_request_interval: 1.0
+
+rrf_k: 60                          # RRF constant of the hybrid fusion
+fusion_candidates: 100             # per-branch depth before fusion
+
+# Seed-chunk eligibility (junk stays in the index but is never gold)
+filters:
+  min_chars: 200
+  max_chars: 4000
+  min_words: 25
+  min_alpha_ratio: 0.5
+  min_cyrillic_ratio: 0.3
+
+# --- S1 --------------------------------------------------------------------
+# `title` in this index is a breadcrumb — the document's path in the knowledge
+# base — so subgraphs are mined WITHIN a folder of it rather than over the whole
+# corpus. Mined globally, half of this corpus's subgraphs shared nothing but the
+# root and were bridged by словоформы («Перестал», «Сторону»); scoped, that is
+# ~3%. See arqg/sid/sections.py.
+mining:
+  idf_percentile: 75               # τ_idf — applies to the unscoped residue only
+  max_document_frequency: 40       # τ_df
+  min_co_occurrence: 2
+  min_chunks: 2
+  max_chunks: 4
+  max_subgraphs_per_entity: 2
+  max_subgraphs_per_file: 6
+  # 0 = unlimited. The entity channel alone tops out at ~1100 here; with the
+  # doc2doc channel below the pool is ~2900. Keeping the cap at 2000 would make
+  # the two channels compete for it — the round-robin spends the budget across
+  # 588 folders instead of 283 and the entity channel drops to 734.
+  target_subgraphs: 3000
+  cross_document_bonus: true
+
+  path_scope_gap: 1                # 0 = same folder, 1 = one level up, null = off
+  min_scope_depth: 2               # a 1-2 segment scope is a whole business domain
+  min_scope_chunks: 2
+  # Inside a folder, discrimination is LOCAL: global τ_idf (df<=2) lands twice in
+  # one folder only by coincidence and collapsed the pool onto 122 of 1585
+  # scopes. An entity in >50% of a folder's chunks is its subject, not a bridge.
+  scope_df_ratio: 0.5
+  scope_idf_percentile: 0          # floor is τ_df; global idf only orders
+  max_subgraphs_per_path: 8
+  max_bridge_type_share: 0.5       # <=50% of a folder's budget on one entity type
+  # Same-document pairs need BOTH: a document worth navigating, and a real gap.
+  same_doc_min_chunks: 20
+  min_index_gap: 8
+
+  # Second bridge channel. The entity channel reaches 283 of this corpus's 800
+  # folders; in 451 of the other 517 no surface form repeats at all, so they are
+  # invisible to exact matching rather than filtered out by a threshold. Pairs
+  # in the band 0.50-0.90 exist in 601 folders. See arqg/sid/simbridge.py.
+  sim_bridge: true
+  sim_bridge_low_percentile: 95    # p95 ~ 0.51 here: related above background
+  # Measured on the first run: with the partner inside the top-3 neighbours
+  # G_BROAD passed 0.22 of the time and 0.13 became tasks, against 0.55 / 0.30
+  # beyond rank 50 — one query already returns both, which is a trivial task.
+  sim_bridge_exclude_top_k: 3
+  sim_bridge_max_pairs_per_scope: 8
+
+# --- S2 --------------------------------------------------------------------
+taxonomy:
+  mechanics: []                    # [] = all six A1 values
+  negation_rate: 0.20              # plan wants >= 15% of tasks with negation
+  candidates_per_cell: 3           # 1-of-N local diversity (plan says 6)
+  keep_per_batch: 1
+
+# --- S3 --------------------------------------------------------------------
+compose:
+  max_facts_per_chunk: 4
+  min_facts_per_question: 2
+  max_facts_per_question: 5
+  max_compose_iters: 2
+  verbatim_match: true             # drop facts whose span is not in the chunk
+  # A doc2doc pair has no named anchor of its own; require the facts to supply
+  # one before the composer is asked to link the two chunks.
+  require_shared_anchor_for_sim: true
+
+# --- S4 / S5 ---------------------------------------------------------------
+gates:
+  top_k: 10
+  run_broad: true
+  run_reach: true
+  dual_critic: false               # pilot only; measures disagreement_rate
+  drop_on_disagreement: true
+  run_min: true
+  min_facts_after_min: 2
+  run_rep: true
+  rep_top_k: 8
+  rep_max_judges_per_fact: 5
+  rep_min_score: 0.55
+
+# --- §7.1 ------------------------------------------------------------------
+density:
+  tau_sim_percentile: 95           # intra-corpus percentile, never absolute
+  tau_low_percentile: 80
+  sample_chunks: 600
+  pseudo_gold_sets: 2000
+  min_reach_tasks_for_median: 300  # below this the provisional median is used
+
+# --- §7.2-7.6 --------------------------------------------------------------
+distractors:
+  enabled: true
+  n_max: 7
+  low_threshold_ratio: 0.34        # below this fraction of the median: sparse_origin
+  min_l2: 2                        # >= 2 L2 (near-miss) distractors per task
+  l1_pool: 40
+  l2_pool: 20
+  allow_l3: true                   # fallback only; share_L3 > 10% is an alarm
+  max_candidates_per_task: 24
+  require_l2_attribute_in_question: true
+  require_neighborhood_hit: true   # sim(d, gold) > τ_sim or the budget is wasted
+  reach_recheck_sample: 500
+
+# --- S7 --------------------------------------------------------------------
+isolation:
+  enabled: true
+  top_k: 10
+  judge_top_n: 4
+  judge_alternative_paths: true
+
+# --- S8 --------------------------------------------------------------------
+# train / holdout only; the SFT/RL split waits for a trainer to split it for
+export:
+  holdout_size: 300
+  dedup_threshold: 0.8
+  fused_gap_bins:
+    low: 0.33
+    mid: 0.66

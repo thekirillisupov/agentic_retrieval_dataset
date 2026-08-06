@@ -10,13 +10,16 @@ import json
 import os
 import sys
 
+import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from arqg.sid.compat import run_compat
+from arqg.sid.compose import has_shared_anchor, plan_batches
 from arqg.sid.config import SidConfig
 from arqg.sid.corpus import SidCorpus, content_hash
+from arqg.sid.dense import DenseIndex
 from arqg.sid.density import fit_density_model, task_density
 from arqg.sid.distractors import (_answer_leaks, _attribute_in_question,
                                   verify_candidates, DistractorCandidate,
@@ -28,9 +31,14 @@ from arqg.sid.facts import span_is_verbatim
 from arqg.sid.gates import cheap_gates, g_min, remeasure
 from arqg.sid.lexical import BM25Index, tokenize
 from arqg.sid.mockllm import make_sid_client, sid_mock_handler
+from arqg.sid.prompts import _facts_block, facts_user
 from arqg.sid.retrieval import Probe, aggregate_gaps_over_groups, gap_bin
 from arqg.sid.schema import Candidate
-from arqg.sid.subgraphs import mine_subgraphs
+from arqg.sid.sections import scope_of, shared_depth
+from arqg.sid.simbridge import CoRetrievability, SimBand, scope_pairs
+from arqg.sid.subgraphs import (_Admissible, _scope_bridges, build_entity_graph,
+                                mine_subgraphs, run_mining)
+from arqg.schema import Chunk
 from arqg.utils import read_jsonl
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -123,6 +131,246 @@ def test_mining_can_require_cross_document(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# S1 — section scoping
+# --------------------------------------------------------------------------- #
+def test_scope_of_drops_the_leaf_and_refuses_shallow_paths():
+    t = "Пространство/Дефекты/СберБизнес/Платежи/Дефект 16471"
+    assert scope_of(t, gap=0) == "Пространство/Дефекты/СберБизнес/Платежи"
+    assert scope_of(t, gap=1) == "Пространство/Дефекты/СберБизнес"
+    # a scope of one segment is the whole corpus — grouping on it is not grouping
+    assert scope_of("Пространство/Дефекты/Дефект 16471", gap=1, min_depth=2) == ""
+    assert scope_of("плоский заголовок", gap=1) == ""
+
+
+def test_shared_depth_measures_topical_distance():
+    assert shared_depth(["A/B/C/x", "A/B/C/y"]) == 3
+    assert shared_depth(["A/B/C/x", "A/Z/Q/y"]) == 1     # only the root: unrelated
+    assert shared_depth([]) == 0
+
+
+def _filler(seed: str) -> str:
+    """A chunk long enough to clear the seed-eligibility filters."""
+    return (f"{seed} Настоящий раздел описывает порядок обработки обращения "
+            "клиента и перечисляет действия оператора при возникновении "
+            "нестандартной ситуации в работе сервиса, включая последовательность "
+            "проверок и подготовку ответа заявителю по установленной форме.")
+
+
+def test_mined_subgraphs_stay_inside_one_section(tmp_path):
+    """The pathology scoping exists for: chunks bridged by a coincidence that
+    share nothing but the corpus root."""
+    cfg = _cfg(tmp_path)
+    corpus = SidCorpus.load(CORPUS)
+    subgraphs = mine_subgraphs(cfg, corpus)
+    assert subgraphs
+    titles = {c.id: c.title for c in corpus.all_chunks()}
+    for s in subgraphs:
+        assert s.path_scope, "every demo subgraph is scopeable"
+        assert s.path_shared_depth >= cfg.mining.min_scope_depth
+        assert shared_depth([titles[c] for c in s.chunks]) == s.path_shared_depth
+
+
+def test_flat_titles_fall_back_to_the_unscoped_search(tmp_path):
+    """A corpus without breadcrumbs must still be minable — the scope is an
+    opportunity this index offers, not a requirement of the algorithm."""
+    cfg = _cfg(tmp_path)
+    flat = [Chunk(file_name=c.file_name, index=c.index, raw_text=c.raw_text,
+                  document_id=c.document_id, title="")
+            for c in SidCorpus.load(CORPUS).all_chunks()]
+    subgraphs = mine_subgraphs(cfg, SidCorpus(flat))
+    assert subgraphs, "flat titles must not starve mining"
+    assert all(s.path_scope == "" for s in subgraphs)
+
+
+def test_scope_bridge_rejects_the_folders_own_subject(tmp_path):
+    """Inside a folder, discrimination is local: an entity in most of the
+    folder's chunks is what the folder is *about*, not a bridge between two of
+    its documents. Global rarity cannot express that."""
+    cfg = _cfg(tmp_path)
+    chunks = []
+    for i in range(6):
+        # «Гидрология» is in every chunk (the subject); «Тритон-9» in two
+        extra = " Изделие «Тритон-9» прошло приёмку." if i in (1, 4) else ""
+        chunks.append(Chunk(file_name=f"d{i}.txt", index=0,
+                            raw_text=_filler("Проект «Гидрология».") + extra,
+                            title=f"База/Море/Отчёты/Документ {i}"))
+    corpus = SidCorpus(chunks)
+    graph = build_entity_graph(cfg, corpus)
+    adm = _Admissible(cfg.mining, {c.file_name: 1 for c in chunks})
+    keys = {b.key for b in _scope_bridges(graph, [c.id for c in chunks], adm, 0.0)}
+    assert "тритон-9" in keys
+    assert "гидрология" not in keys, "the folder's subject is not a bridge"
+
+
+def test_same_document_pairs_need_a_navigable_document(tmp_path):
+    """`min_index_gap` alone is not the test: positions 0 and 9 of a ten-chunk
+    page are one read apart, while the same gap in a long document is a
+    different section."""
+    cfg = _cfg(tmp_path)
+    cfg.mining.same_doc_min_chunks = 20
+    cfg.mining.min_index_gap = 8
+
+    def corpus_of(n_chunks: int) -> SidCorpus:
+        rows = []
+        for i in range(n_chunks):
+            mark = " Код ТУ-7731 указан в акте." if i in (0, 12) else ""
+            rows.append(Chunk(file_name="doc.txt", index=i,
+                              raw_text=_filler(f"Раздел {i}.") + mark,
+                              title="База/Море/Отчёты/Единственный документ"))
+        return SidCorpus(rows)
+
+    long_doc = mine_subgraphs(cfg, corpus_of(30))
+    short_doc = mine_subgraphs(cfg, corpus_of(14))
+    assert long_doc, "a 30-chunk document may bridge positions 0 and 12"
+    assert not short_doc, "a 14-chunk document is read, not navigated"
+
+
+# --------------------------------------------------------------------------- #
+# S1 — the doc2doc channel
+# --------------------------------------------------------------------------- #
+def _folder_without_a_repeated_entity() -> SidCorpus:
+    """Four documents of one folder, no surface form shared by any two."""
+    marks = ["«Альфа-1»", "«Бета-2»", "«Гамма-3»", "«Дельта-4»"]
+    return SidCorpus([
+        Chunk(file_name=f"d{i}.txt", index=0,
+              raw_text=_filler(f"Изделие {mark} прошло приёмку."),
+              title=f"База/Море/Отчёты/Документ {i}")
+        for i, mark in enumerate(marks)])
+
+
+def _dense_at_angles(ids: list[str], degrees: list[float]) -> DenseIndex:
+    """Unit vectors on a circle: cos(i, j) is exactly cos(θi − θj), so a fixture
+    states the similarities it means instead of approximating them."""
+    rad = np.radians(np.asarray(degrees, dtype="float64"))
+    mat = np.stack([np.cos(rad), np.sin(rad)], axis=1).astype("float32")
+    return DenseIndex(list(ids), mat)
+
+
+def test_sim_band_keeps_pairs_above_the_corpus_background():
+    """Being in one folder is not a relation; the lower edge is where a pair
+    stops being as far apart as two random chunks."""
+    ids = ["a::0", "b::0", "c::0"]
+    dense = _dense_at_angles(ids, [0, 45, 89])        # cos: .71, .02, .71
+    band = SimBand(low=0.5, exclude_top_k=0, percentile=95)
+    pairs = scope_pairs(dense, ids, band, limit=10)
+    assert {frozenset(p) for p, _ in pairs} == {frozenset(("a::0", "b::0")),
+                                                frozenset(("b::0", "c::0"))}
+    # least co-retrievable first: inside a folder that is the axis left to spend
+    assert [round(s, 2) for _, s in pairs] == sorted(round(s, 2) for _, s in pairs)
+
+
+def test_co_retrievability_is_a_rank_not_a_cosine():
+    """Measured on the first `ckr` run: with the partner inside the top-3
+    neighbours G_BROAD passed 0.22 of the time and 0.13 became tasks, against
+    0.55 / 0.30 beyond rank 50 — one query already returns both. The cosine
+    cannot express it here (p96 = 0.54, p98 = 0.80), the rank can."""
+    ids = [f"c{i}::0" for i in range(5)]
+    dense = _dense_at_angles(ids, [0, 5, 10, 15, 60])
+    far = float(dense.vec("c0::0") @ dense.vec("c4::0"))     # cos 60° = 0.5
+    assert far == pytest.approx(0.5, abs=1e-3)
+    # 0.5 is a high cosine, yet three chunks sit closer to c0 than c4 does
+    assert not CoRetrievability(dense, 3).co_retrievable("c0::0", "c4::0", far)
+    assert CoRetrievability(dense, 4).co_retrievable("c0::0", "c4::0", far)
+
+
+def test_similarity_bridges_a_folder_no_entity_can(tmp_path):
+    """The channel's whole reason to exist: on `ckr` 451 folders contain no
+    surface form repeated in two chunks, so they are invisible to the entity
+    miner rather than filtered out by one of its thresholds."""
+    cfg = _cfg(tmp_path)
+    corpus = _folder_without_a_repeated_entity()
+    assert not mine_subgraphs(cfg, corpus), "no entity bridges this folder"
+
+    cfg.mining.sim_bridge = True
+    cfg.mining.sim_bridge_low_percentile = 50
+    cfg.mining.sim_bridge_exclude_top_k = 0     # covered on its own above
+    ids = [c.id for c in corpus.all_chunks()]
+    dense = _dense_at_angles(ids, [0, 40, 88, 89])
+    subgraphs = mine_subgraphs(cfg, corpus, dense)
+    assert subgraphs, "doc2doc must reach a folder the entity channel cannot"
+    assert all(s.bridge_kind == "similarity" for s in subgraphs)
+    for s in subgraphs:
+        a, b = s.chunks[0], s.chunks[1]
+        assert s.pair_similarity == pytest.approx(float(dense.vec(a) @ dense.vec(b)),
+                                                  abs=1e-3)
+
+
+def test_the_rank_ceiling_is_what_rejects_a_trivial_pair(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.mining.sim_bridge = True
+    cfg.mining.sim_bridge_low_percentile = 50
+    corpus = _folder_without_a_repeated_entity()
+    ids = [c.id for c in corpus.all_chunks()]
+    dense = _dense_at_angles(ids, [0, 40, 88, 89])
+
+    cfg.mining.sim_bridge_exclude_top_k = 3
+    assert not mine_subgraphs(cfg, corpus, dense), "every partner is a top-3 neighbour here"
+    cfg.mining.sim_bridge_exclude_top_k = 0
+    assert mine_subgraphs(cfg, corpus, dense), "the rank ceiling is what rejected it"
+
+
+def test_similarity_channel_needs_the_dense_index(tmp_path):
+    """Enabled without an index the stage degrades to the entity channel rather
+    than mining nothing."""
+    cfg = _cfg(tmp_path)
+    cfg.mining.sim_bridge = True
+    corpus = SidCorpus.load(CORPUS)
+    assert mine_subgraphs(cfg, corpus, None)
+
+
+def test_entity_bridges_are_spent_before_similarity_ones(tmp_path):
+    """A named bridge says what the chunks have in common; a similarity bridge
+    only asserts that something does. The folder's budget goes to the former."""
+    cfg = _cfg(tmp_path)
+    cfg.mining.sim_bridge = True
+    cfg.mining.sim_bridge_low_percentile = 50
+    cfg.mining.sim_bridge_exclude_top_k = 0
+    cfg.mining.max_subgraphs_per_path = 1
+    chunks = [Chunk(file_name=f"d{i}.txt", index=0,
+                    raw_text=_filler("Изделие «Тритон-9» прошло приёмку."
+                                     if i in (2, 3) else f"Позиция «Объект-{i}»."),
+                    title=f"База/Море/Отчёты/Документ {i}") for i in range(4)]
+    corpus = SidCorpus(chunks)
+    dense = _dense_at_angles([c.id for c in chunks], [0, 40, 88, 89])
+    subgraphs = mine_subgraphs(cfg, corpus, dense)
+    assert [s.bridge_kind for s in subgraphs] == ["entity"]
+
+
+def test_shared_anchor_guard_holds_similarity_subgraphs_only():
+    """S3, not S1, decides whether a doc2doc pair has anything to build a link
+    on — the facts are extracted either way and they carry the paraphrase."""
+    facts = {
+        "a::0": [{"fact_id": "f1", "chunk_id": "a::0", "entities": ["Дефекту 16471"],
+                  "discriminating_attributes": ["date:2019"]}],
+        "b::0": [{"fact_id": "f2", "chunk_id": "b::0", "entities": ["дефект 16471"],
+                  "discriminating_attributes": []}],
+        "c::0": [{"fact_id": "f3", "chunk_id": "c::0", "entities": ["Эквайринг"],
+                  "discriminating_attributes": []}],
+    }
+    assert has_shared_anchor({"chunks": ["a::0", "b::0"]}, facts), "inflection is not a difference"
+    assert not has_shared_anchor({"chunks": ["a::0", "c::0"]}, facts)
+    # an entity subgraph is never asked: its bridge IS the anchor
+    cfg = SidConfig()
+    sim = {"subgraph_id": "s1", "chunks": ["a::0", "c::0"], "bridge_kind": "similarity"}
+    ent = {"subgraph_id": "s2", "chunks": ["a::0", "c::0"], "bridge_kind": "entity"}
+    kept = {s["subgraph_id"] for _, members in plan_batches(cfg, [sim, ent], facts)
+            for _, s in members}
+    assert kept == {"s2"}
+
+
+def test_per_file_quota_counts_subgraphs_not_member_chunks(tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.mining.max_subgraphs_per_file = 2
+    corpus = SidCorpus.load(CORPUS)
+    counts = {}
+    for s in mine_subgraphs(cfg, corpus):
+        for doc in {c.split("::")[0] for c in s.chunks}:
+            counts[doc] = counts.get(doc, 0) + 1
+    assert counts, "the quota must not empty the pool"
+    assert max(counts.values()) <= cfg.mining.max_subgraphs_per_file
+
+
+# --------------------------------------------------------------------------- #
 # S3 — facts
 # --------------------------------------------------------------------------- #
 def test_verbatim_span_check():
@@ -130,6 +378,28 @@ def test_verbatim_span_check():
     assert span_is_verbatim("была основана в 1992 году", chunk)   # whitespace-normalised
     assert not span_is_verbatim("была основана в 1993 году", chunk)
     assert not span_is_verbatim("", chunk)
+
+
+def test_section_is_prompt_context_but_never_a_fact_source():
+    """The breadcrumb is given to the extractor so `fact_normalized` can be
+    self-contained, and the verbatim check still runs against the chunk text
+    alone — so a span lifted from the heading is dropped, not repaired."""
+    section = "База/Дефекты/СберБизнес/Дефект DCBHCK6-16471"
+    text = "Статус дефекта: открыт. Обходное решение отсутствует."
+    prompt = facts_user("f.html::0", text, 4, section)
+    assert "СберБизнес" in prompt and "Дефект DCBHCK6-16471" in prompt
+    assert not span_is_verbatim("Дефект DCBHCK6-16471", text)
+    assert span_is_verbatim("Обходное решение отсутствует", text)
+
+
+def test_composer_is_shown_the_section_of_every_fact():
+    facts = [{"fact_id": "f_1", "chunk_id": "a::0", "fact_normalized": "первый факт",
+              "verbatim_span": "цитата один", "section": "База/Море/Отчёты/Док"},
+             {"fact_id": "f_2", "chunk_id": "b::0", "fact_normalized": "второй факт",
+              "verbatim_span": "цитата два"}]
+    block = _facts_block(facts)
+    assert "раздел: База > Море > Отчёты > Док" in block
+    assert block.count("раздел:") == 1, "a fact without a section renders no line"
 
 
 # --------------------------------------------------------------------------- #
@@ -431,6 +701,65 @@ def test_end_to_end_mock(tmp_path):
     gate_stats = json.load(open(cfg.paths.gate_stats, encoding="utf-8"))
     assert gate_stats["funnel"]["G_BROAD"]["seen"] > 0
     assert gate_stats["funnel"]["G_MIN"]["seen"] > 0
+
+
+def test_gate_winners_survive_judge_outage(tmp_path):
+    """Cheap gates (G_BROAD/G_REACH) need the embedder; G_SOLVE needs the judge.
+    If those two sit behind different network paths and the judge is briefly
+    unreachable, a 1-of-N winner must be cached and retried later — not
+    silently recorded as though the critic had ruled it unsolvable."""
+    from arqg.sid import pipeline
+    from arqg.sid.compose import candidates_from_dicts
+    from arqg.sid.env import build_env
+    from arqg.sid.gates import run_gates
+    from arqg.sid.subgraphs import run_mining
+    from arqg.llm import BaseLLM, LLMConnectionError
+
+    cfg = _cfg(tmp_path)
+    run_compat(cfg)
+    asyncio.run(run_mining(cfg))
+    asyncio.run(pipeline.stage_facts(cfg))
+    asyncio.run(pipeline.stage_compose(cfg))
+    candidates = candidates_from_dicts(list(read_jsonl(cfg.paths.candidates)))
+    assert candidates, "need at least one composed candidate to gate"
+
+    class FlakyJudge(BaseLLM):
+        """Simulates a judge that is simply unreachable — not a judge that
+        looked at the question and objected."""
+        def __init__(self, cfg):
+            super().__init__(cfg)
+            self.calls = 0
+
+        async def complete_json(self, system, user, **kw):
+            self.calls += 1
+            raise LLMConnectionError("simulated: judge network unreachable")
+
+    async def _run(judge: BaseLLM) -> list[dict]:
+        env = await build_env(cfg, version="v0")
+        gen = make_sid_client(cfg.llm)
+        try:
+            return await run_gates(cfg, env, gen, judge, candidates)
+        finally:
+            await gen.aclose()
+            await env.aclose()
+
+    flaky = FlakyJudge(cfg.judge)
+    records = asyncio.run(_run(flaky))
+    assert records == [], "nothing can pass G_SOLVE while the judge is down"
+    assert flaky.calls > 0, "at least one winner should have reached G_SOLVE"
+
+    winners_cached = list(read_jsonl(cfg.paths.gate_winners))
+    assert winners_cached, "1-of-N winners must be cached, not lost, on outage"
+    decisions = list(read_jsonl(cfg.paths.gate_decisions))
+    assert all(d["outcome"] != "rejected_G_SOLVE" for d in decisions), (
+        "a judge outage must never be recorded as a genuine G_SOLVE rejection")
+
+    # the judge recovers; a fresh run must finish the cached winners via
+    # G_SOLVE without needing to repeat their (embedding-only) cheap gates
+    records2 = asyncio.run(_run(make_sid_client(cfg.judge)))
+    assert records2, "cached winners must pass G_SOLVE once the judge is back"
+    assert any(r["candidate_id"] in {c.candidate_id for c in candidates}
+               for r in records2)
 
 
 def test_resume_is_idempotent(tmp_path):

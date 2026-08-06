@@ -47,15 +47,20 @@ async def extract_facts(cfg: SidConfig, llm: BaseLLM, corpus: SidCorpus,
         text = corpus.text(cid)
         if not text:
             return
+        section = _section_of(corpus, cid)
         try:
             obj = await llm.complete_json(
-                FACTS_SYS, facts_user(cid, text, cfg.compose.max_facts_per_chunk))
+                FACTS_SYS,
+                facts_user(cid, text, cfg.compose.max_facts_per_chunk, section))
         except Exception as e:                              # noqa: BLE001
             log.warning("S3a: fact extraction failed for %s: %s", cid, e)
             return
         kept = 0
         for i, raw in enumerate(obj.get("facts", [])[: cfg.compose.max_facts_per_chunk]):
             span = str(raw.get("verbatim_span", ""))
+            # against the chunk text ONLY, never the title: the breadcrumb is
+            # context for phrasing a self-contained fact, not a source it may
+            # be quoted from. A fact copied out of the heading fails here.
             if cfg.compose.verbatim_match and not span_is_verbatim(span, text):
                 log.debug("S3a: dropping non-verbatim span in %s", cid)
                 continue
@@ -67,6 +72,7 @@ async def extract_facts(cfg: SidConfig, llm: BaseLLM, corpus: SidCorpus,
                 entities=[str(e) for e in raw.get("entities", [])][:8],
                 discriminating_attributes=[
                     str(a) for a in raw.get("discriminating_attributes", [])][:8],
+                section=section,
             )
             if not fact.fact_normalized:
                 continue
@@ -79,6 +85,32 @@ async def extract_facts(cfg: SidConfig, llm: BaseLLM, corpus: SidCorpus,
     await asyncio.gather(*(one(c) for c in todo))
     facts = {cid: [f for f in rows if f.get("fact_id")]
              for cid, rows in load_facts(cfg.paths.facts).items()}
+    attach_sections(corpus, facts)
     n = sum(len(v) for v in facts.values())
     log.info("S3a: %d facts over %d chunks", n, len([k for k, v in facts.items() if v]))
     return facts
+
+
+def _section_of(corpus: SidCorpus, chunk_id: str) -> str:
+    """The chunk's raw breadcrumb title. Stored unrendered so downstream stages
+    can still read it as a path (S8 measures how far apart a task's sections
+    are); `prompts` does the ``A > B > C`` presentation."""
+    c = corpus.get(chunk_id)
+    return c.title if c else ""
+
+
+def attach_sections(corpus: SidCorpus, facts: dict[str, list[dict]]) -> None:
+    """Fill in `section` on facts that predate the field.
+
+    `facts.jsonl` is a cache keyed by chunk_id, so a resume never re-extracts a
+    chunk that was already done — including ones extracted before sections
+    existed. Deriving the field from the corpus on load keeps a resumed run from
+    composing half its questions blind.
+    """
+    for cid, rows in facts.items():
+        section = ""
+        for f in rows:
+            if f.get("section"):
+                continue
+            section = section or _section_of(corpus, cid)
+            f["section"] = section

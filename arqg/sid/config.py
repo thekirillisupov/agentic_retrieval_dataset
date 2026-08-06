@@ -32,6 +32,63 @@ class MiningConfig:
     require_cross_document: bool = False
     seed: int = 11
 
+    # ---- section scoping (see sections.py) -------------------------------- #
+    # Mine within a folder of the `title` breadcrumb instead of over the whole
+    # corpus. `None` disables scoping and restores the plain global search;
+    # chunks whose title is too shallow to scope fall back to it either way.
+    # 0 = immediate parent folder (siblings), 1 = one level up (cousins).
+    path_scope_gap: int | None = 1
+    min_scope_depth: int = 2              # a 1–2 segment scope is a whole domain
+    min_scope_chunks: int = 2
+    # An entity in more than this fraction of the scope's chunks is the folder's
+    # *subject*, not a bridge between two of its documents ("Эквайринг" inside
+    # the эквайринг folder). This is what replaces global rarity as the
+    # discrimination test once the search is confined to a folder.
+    scope_df_ratio: float = 0.5
+    # Global τ_idf collapses under scoping: a globally rare entity (df <= 2)
+    # lands twice in the same folder only by coincidence, which concentrates the
+    # whole pool in a handful of folders. Inside a scope the floor is therefore
+    # a *separate*, much lower percentile; τ_df still applies, and the global
+    # idf still orders candidates rarest-first.
+    scope_idf_percentile: float = 0.0
+    max_subgraphs_per_path: int = 8
+    # ... and not all of them on the same kind of bridge. Whole folders of
+    # defect cards share nothing but dates, and six date bridges from one folder
+    # are one question six times. A *share* of the folder's budget rather than
+    # an absolute count, because the two failure modes are not symmetric: an
+    # absolute cap of 2 also punishes a folder whose twenty bridges are twenty
+    # different people, which is twenty different questions. Type monoculture
+    # only implies question monoculture where the type fixes the question shape.
+    max_bridge_type_share: float = 0.5
+    # Two chunks of ONE document are a real second query only if reading that
+    # document would not hand the agent both for free. That takes two
+    # conditions, not one: the document must be long enough to be worth
+    # navigating at all, and the gap between the chunks wide enough. Positions
+    # 2 and 5 of a six-chunk page are one read apart; positions 40 and 300 of a
+    # 900-chunk page are different sections.
+    same_doc_min_chunks: int = 20
+    min_index_gap: int = 8
+
+    # ---- doc2doc bridging (see simbridge.py) ------------------------------ #
+    # A second bridge channel for the folders an entity bridge cannot reach.
+    # Off by default: it needs the dense index, which the entity channel does
+    # not, so a corpus that mines fine without an embedder keeps doing so.
+    sim_bridge: bool = False
+    # "related above the corpus background" — a percentile of the same pairwise
+    # similarity sample §7.1 fits τ_sim on, so the two agree by construction.
+    sim_bridge_low_percentile: float = 95.0
+    # The upper bound is a *rank*, not a cosine. On `ckr` the cosine
+    # distribution is compressed exactly where the ceiling has to sit (p96 =
+    # 0.54, p98 = 0.80), so an absolute threshold there is unstable, while the
+    # rank is scale-free and is what actually predicted the outcome: with the
+    # partner inside the top-3 neighbours G_BROAD passed 0.22 of the time
+    # against 0.55 beyond rank 50, because one query already returns both.
+    sim_bridge_exclude_top_k: int = 3
+    # Similarity pairs are tried low-first: within a folder topicality is
+    # already guaranteed by the scope, so the remaining axis is co-retrievability
+    # and less of it is better.
+    sim_bridge_max_pairs_per_scope: int = 8
+
 
 @dataclass
 class TaxonomyConfig:
@@ -54,6 +111,11 @@ class ComposeConfig:
     max_facts_per_question: int = 5
     max_compose_iters: int = 2            # plan says 4; 2 is enough for v1 cost
     verbatim_match: bool = True           # harness check: span occurs in chunk
+    # A similarity-bridged subgraph carries no discrete anchor of its own, so
+    # the composer has nothing to build the link *on* and will invent one. The
+    # check is deferred to here rather than paid for at S1: the facts say what
+    # the chunks actually have in common, and they are extracted either way.
+    require_shared_anchor_for_sim: bool = True
 
 
 @dataclass
@@ -161,6 +223,12 @@ class SidPaths:
     # silently inflating the pool.
     @property
     def gate_decisions(self) -> str: return self._p("gate_decisions.jsonl")
+    # Candidates that already cleared G_BROAD/G_REACH (embedding-only) and won
+    # their 1-of-N batch, cached so a re-run that only has the LLM reachable
+    # (e.g. embeddings need one network path, the LLM gateway a different one)
+    # never has to repeat the embedding calls to get back to G_SOLVE.
+    @property
+    def gate_winners(self) -> str: return self._p("gate_winners.jsonl")
     @property
     def minimize_decisions(self) -> str: return self._p("minimize_decisions.jsonl")
     @property

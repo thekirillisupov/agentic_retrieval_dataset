@@ -159,6 +159,11 @@ class RetrieveConfig:
     auth_key_env: str = "GIGACHAT_AUTH_KEY"    # base64(client_id:secret) for OAuth Bearer
     scope: str = "GIGACHAT_API_PERS"
     oauth_refresh_interval: float = 600.0      # re-fetch OAuth token every N seconds (0 = expiry only)
+    # mTLS alternative to the token flow above (e.g. an internal gateway reachable
+    # only over VPN with a client cert, no OAuth). When both are set, no bearer
+    # token is fetched or sent — the cert alone authenticates the client.
+    cert_file: str = ""
+    key_file: str = ""
     verify_ssl: bool = True        # GigaChat needs the Russian Min-Digit CA; see README
     ca_bundle: str = ""            # path to a CA bundle (.pem) if verify_ssl
     # GigaEmbeddings is asymmetric: queries get an instruction prefix, passages don't.

@@ -15,5 +15,12 @@ PyYAML>=6.0
 # (not needed if you pass --input with a local musique dump)
 # datasets>=2.14.0
 
+# Optional: POS filtering in SID entity mining (arqg.sid.entities) — rejects
+# bare capitalised words that are actually verbs/adverbs/prepositions before
+# they become bridge entities. Dictionary + FST, no GPU, no network. Mining
+# runs without it, just noisier.
+# pymorphy3>=2.0.0
+# pymorphy3-dicts-ru
+
 # Dev / tests
 pytest>=7.0

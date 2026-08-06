@@ -20,7 +20,7 @@ from .density import (DensityModel, annotate_density, fit_density_model,
 from .distractors import reach_recheck, run_distractors
 from .env import build_env
 from .export import run_export
-from .facts import extract_facts, load_facts
+from .facts import attach_sections, extract_facts, load_facts
 from .gates import run_gates, run_minimize
 from .isolation import run_isolation
 from .mockllm import make_sid_client
@@ -46,8 +46,13 @@ async def stage_facts(cfg: SidConfig) -> dict[str, list[dict]]:
 
 
 async def stage_compose(cfg: SidConfig) -> list[dict]:
+    from .corpus import SidCorpus
     facts = {cid: rows for cid, rows in load_facts(cfg.paths.facts).items()}
     facts = {cid: [f for f in rows if f.get("fact_id")] for cid, rows in facts.items()}
+    # `compose` can be run on its own against a facts cache written before
+    # sections existed, so the breadcrumbs are filled in here too, not only in
+    # the stage that extracts them.
+    attach_sections(SidCorpus.load(cfg.paths.corpus), facts)
     llm = make_sid_client(cfg.llm)
     try:
         cands = await compose_candidates(cfg, llm, _subgraphs(cfg), facts)
@@ -176,7 +181,7 @@ def _load_density(cfg: SidConfig) -> DensityModel:
 
 async def run_all(cfg: SidConfig) -> dict[str, Any]:
     run_compat(cfg)
-    run_mining(cfg)
+    await run_mining(cfg)
     await stage_facts(cfg)
     await stage_compose(cfg)
     await stage_gates(cfg)

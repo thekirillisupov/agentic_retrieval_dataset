@@ -32,6 +32,14 @@ class LLMError(RuntimeError):
     pass
 
 
+class LLMConnectionError(LLMError):
+    """Every retry exhausted without getting a response at all (DNS/TLS/connect/
+    timeout). Distinct from a response that came back but was empty or not JSON:
+    callers that would otherwise treat "critic raised an exception" as "critic
+    said no" need to tell an unreachable gateway apart from a genuine verdict —
+    the former should be retried later, not recorded as a permanent decision."""
+
+
 def make_client(cfg: LLMConfig) -> "BaseLLM":
     backend = cfg.backend.lower()
     if backend in ("openai", "vllm", "openai-compatible"):
@@ -66,10 +74,11 @@ class BaseLLM:
             except Exception as e:  # noqa: BLE001 - backends raise varied types
                 last = e
                 delay = min(2 ** attempt, 30) + random.uniform(0, 1)
-                log.warning("LLM call failed (attempt %d/%d): %s — retrying in %.1fs",
+                log.warning("LLM call failed (attempt %d/%d): %r — retrying in %.1fs",
                             attempt + 1, self.cfg.max_retries, e, delay)
                 await asyncio.sleep(delay)
-        raise LLMError(f"LLM call failed after {self.cfg.max_retries} attempts: {last}")
+        raise LLMConnectionError(
+            f"LLM call failed after {self.cfg.max_retries} attempts: {last!r}")
 
     async def complete_json(self, system: str, user: str, **kw: Any) -> JsonObj:
         """Complete and parse a JSON object, with one corrective re-ask."""

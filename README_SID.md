@@ -32,7 +32,7 @@ python run_sid.py all --config config_mine.yaml
 ```
 S0 compat    index/unit compatibility, available fields, v0 manifest
    ↓
-S1 mine      entity ↔ chunk subgraphs (rare bridging entities, v0 only)
+S1 mine      entity ↔ chunk subgraphs + doc2doc pairs, WITHIN a section scope
    ↓
 S3 facts     atomic facts with verbatim spans, cached per chunk
    compose   1-of-N questions per coverage cell, from different subgraphs
@@ -66,6 +66,120 @@ individually: `python run_sid.py gates --config …`.
   lives in the shared index and is a candidate in the results for B. If it
   happens to be a valid alternative path for B, that is exactly the labelling
   hole isolation exists to close, and a check on v0 cannot see it.
+
+---
+
+## Where S1 looks: section scopes
+
+In these corpora `title` is not a headline, it is the document's path in the
+knowledge base:
+
+```
+Общее пространство ЦКР (УСО, ТП, УУП)/Дефекты/Дефекты СберБизнес/<документ>
+```
+
+The last segment names the document; the prefix is the folder it was filed in.
+That prefix is the only *editorial* topical grouping the index carries, and S1
+confines its search to it. Run over the whole corpus instead, "rare entity
+shared by two chunks" is satisfied by coincidence far more often than by subject
+matter — on `ckr`, **51% of globally-mined subgraphs shared nothing but the
+corpus root**, held together by словоформы like «Перестал» or «Сторону». Scoped,
+that is 3%, and the bridges become «национальное бюро кредитных историй»,
+«объединенное кредитное бюро», actual defect codes and dates.
+
+The scope is `title` minus its leaf minus `path_scope_gap` further levels — `0`
+is siblings only, `1` also admits cousins. A chunk whose title is too shallow to
+name a folder falls back to the unscoped global search, so a corpus with flat
+titles behaves exactly as it did before scoping existed.
+
+**Confining the search forces τ_idf to be reinterpreted.** Global rarity was
+only ever a proxy for "this entity discriminates", and inside a folder it is the
+wrong proxy: an entity rare enough to clear τ_idf (df ≈ 2) lands twice in the
+*same* folder only by coincidence, which collapsed a 1585-scope corpus onto 122
+folders. Discrimination inside a folder is local — an entity in two of a
+folder's twelve chunks separates them whatever its global df, and one in *most*
+of the folder's chunks is the folder's subject rather than a bridge («Эквайринг»
+inside the эквайринг folder). So `scope_df_ratio` is the upper bound, τ_df stays
+as the ubiquity ceiling, and global idf is demoted to the ordering key.
+
+`index` earns a job too. `require_cross_document` asked the wrong question: this
+corpus has documents of 900+ chunks, where positions 40 and 300 are different
+sections that need a second query, while positions 2 and 5 of a six-chunk page
+are one read apart. So a same-document pair needs **both** a document worth
+navigating (`same_doc_min_chunks`) and a real gap (`min_index_gap`).
+
+Two quotas keep a folder from dominating: `max_subgraphs_per_path`, and
+`max_bridge_type_share` — a *share* of the folder's budget rather than an
+absolute count, because the failure modes are not symmetric. A folder of defect
+cards whose only bridges are dates yields one question six times, but a folder
+whose twenty bridges are twenty different people yields twenty different
+questions; an absolute cap punishes both, and 221 of 419 productive scopes on
+`ckr` carry bridges of exactly one type.
+
+The scope is deliberately **not** registered as an index tag on the entity graph.
+As a tag it would bypass τ_idf through `is_tag`, inflate the df of every folder
+member and let the extension step pull in an arbitrary sibling — the same
+failure that already keeps `document_id` out. A folder is *where to look*, not
+*what ties the chunks together*.
+
+`stats.json` reports `sections.share_root_only`, so the pathology this removes
+stays measured rather than assumed.
+
+### Where the entity bridge runs out: the doc2doc channel
+
+Scoping fixes *where* to look; it does not help with folders where the entity
+miner finds nothing to look *at*. On `ckr` only 283 of 800 scopes contain a rare
+surface form repeated in two of their chunks, and the reason is not a threshold
+being strict — of the 517 that yield nothing, **451 contain no repeated surface
+form at all**, 45 no extracted entity at all, and only 12 are blocked by τ_df or
+the folder-subject ratio. Lifting τ_df to infinity buys 352 of 800. Two chunks
+about one subject written by two people share no surface form, and that is most
+of a knowledge base.
+
+So `mining.sim_bridge` adds a second channel that bridges a folder by doc2doc
+similarity — the relation the retriever itself will be measured in. It reaches
+598 of the 800 scopes, and the mined pool goes from ~1100 subgraphs to ~2900.
+
+**Its upper bound is a rank, not a cosine.** Similarity does not tell good tasks
+from bad: subgraphs that reached a task averaged 0.674 against 0.682 for those
+that died in the gates. What it predicts is *triviality*, because two chunks
+close enough are returned by one query and that is exactly what `G_BROAD`
+rejects — with the partner inside the top-3 neighbours `G_BROAD` passed 0.22 of
+the time and 0.13 of candidates became tasks, against 0.55 / 0.30 beyond
+neighbour 50. An absolute cosine cannot carry that here: the distribution is
+compressed precisely where the ceiling belongs (p96 = 0.54, p98 = 0.80), so one
+percentile of movement is 0.18 of cosine, and a folder of near-identical defect
+cards sits above any corpus-wide ceiling. Rank is scale-free and local, which is
+what the failure mode is. The lower edge stays a corpus percentile of the same
+pairwise sample §7.1 fits τ_sim on. Pairs are tried lowest-similarity first, so
+the emitted pool sits just above the lower edge (median 0.520) and the rank
+ceiling only catches the residue.
+
+What this channel cannot supply is an **anchor**. An entity bridge names what
+two chunks have in common; a similarity bridge only asserts that something does,
+and a composer handed two fragments with nothing it can point at will invent the
+link — the failure section scoping exists to remove. The check is therefore
+deferred to S3 (`compose.require_shared_anchor_for_sim`): a similarity subgraph
+survives only if the facts of two different chunks name the same thing, stemmed
+so «дефекту» and «дефект» count as one. The facts are extracted either way, they
+are what the composer will actually see, and they carry the paraphrase the raw
+text does not — so the guard costs no call that was not already being made.
+
+Entity bridges are spent before similarity ones inside each folder, and the
+channel is scope-local: corpus-wide, doc2doc would reintroduce the coincidental
+pairing scoping was added to remove, with no folder to bound it. `stats.json`
+reports `bridge_kind` over the surviving tasks, so the share of the pool the new
+channel actually carries through the funnel stays measured too.
+
+**The breadcrumb also goes into the prompts.** These corpora are largely
+markdown tables whose subject lives in the title, not in the cells — a chunk
+reading `| Номер дефекта | DCBHCK6-16471 |` gives a fact extractor no way to
+know which product the defect belongs to, and the composer then invents the link
+between two such fragments. S3 passes the path as context to both. It is context
+only: `verbatim_span` is still checked against the chunk text alone, so a fact
+lifted from the heading is dropped rather than repaired. Since `embed_with_title`
+is on, the retriever already sees the path, so a question that references a
+section stays reachable for `G_REACH`.
 
 ---
 
@@ -119,6 +233,8 @@ the pool when there is a trainer to split it for.
 | `distractors.share_tasks_with_empty_L2_band` | > 0.25 means the corpus is too sparse for this class of task — revisit subgraph selection rather than flooding the index with synthetic text |
 | `gates.funnel` / `gates.by_mechanic` | low `G_REACH` pass-rate with the rest normal ⇒ the environment's ceiling; `G_REACH` fine but `G_SOLVE`/`G_BROAD` sagging ⇒ the generator. Also doubles as the cell × corpus feasibility matrix. |
 | `density.density_median_all` vs `density_median_reach` | how far `G_REACH` biases the pool |
+| `bridge_kind` | which S1 channel the surviving tasks came from. Against the channel's share of the *mined* pool (logged by S1) it says whether the folders only doc2doc can reach produce tasks or merely candidates |
+| `sections.share_root_only` | gold sets whose fragments share nothing but the corpus root — bridged by coincidence, so the composer had to invent the link. Globally-mined `ckr` sat at 0.51; anything non-trivial means section scoping is not reaching the pool. |
 
 Expect a low yield. The plan budgets 30–40% through the funnel; generate with a
 ×3 margin.
@@ -176,6 +292,10 @@ A leaked marker teaches "synthetic → ignore", which is a shortcut, not a skill
 |---|---|---|
 | NER model, validated on 200 chunks | pattern extractor (proper nouns, quoted names, codes, dates, amounts) behind the same interface | the miner needs *rare repeated surface forms that bridge chunks*; a model to serve and validate buys little here. Swapping one in is local to `entities.py`. |
 | τ_idf = 75th percentile of the corpus idf distribution | same percentile, taken over **bridge-eligible** entities (`df` between `min_co_occurrence` and `τ_df`) | over every surface form the corpus is dominated by hapax entities that all carry the maximum idf, so the percentile collapses onto `log(N/1)` and admits only `df = 1` entities — which `co_occurrence ≥ 2` then rejects, leaving nothing |
+| mine bridges over the whole corpus | mine **within a `title` section scope**; τ_idf inside a scope replaced by scope-local `scope_df_ratio` with τ_df as the ceiling | 51% of globally-mined `ckr` subgraphs shared only the corpus root and were bridged by словоформы. Keeping global τ_idf *and* scoping collapses the pool onto 122 of 1585 folders — see "Where S1 looks" |
+| a shared entity is the only thing that can bridge two chunks | a second **doc2doc** channel, bounded above by neighbour rank, with the anchor required from the facts at S3 | an entity bridge reaches 283 of 800 folders, and 451 of the rest contain no repeated surface form at all rather than one a threshold rejected — see "Where the entity bridge runs out" |
+| `require_cross_document` as the "not reading on" test | `same_doc_min_chunks` **and** `min_index_gap` | the question is whether reading the document hands the agent both chunks, which depends on the document: 900-chunk pages have genuine sections, six-chunk pages do not |
+| chunk text is the only prompt input | the section breadcrumb is passed to S3 as context, never as a fact source | a bare markdown table row does not say which product it belongs to, and the composer fills that gap by inventing. `verbatim_span` is still matched against the chunk alone. |
 | incremental composition, base → +hop → +constraint, `max_compose_iters = 4` | one-shot composition + repair against the critic's objection, `max_compose_iters = 2` | same corrective signal, a fraction of the calls |
 | `N = 6` candidates per cell | `N = 3` (configurable) | cost; the mechanism is what matters at v1 |
 | LLM proposes submechanics per corpus | fixed grounded list per mechanic | they are local diversity, not cells; a corpus that cannot support a cell fails its gates and shows up in `gate_stats` |
@@ -208,8 +328,15 @@ Throughput is governed by `llm.max_concurrency` and `embed.max_concurrency`.
 python -m pytest tests/test_sid.py -q
 ```
 
-25 tests, all offline on the mock backend: the BM25 branch, entity mining, the
-gates (including that `G_BROAD` really rejects a question that retrieves its own
-gold, and that `G_MIN` stops at the fact floor), gap aggregation, density
-percentiles, distractor verification, marker containment, MinHash de-duplication,
-a full end-to-end run and resume idempotency.
+43 tests, all offline on the mock backend: the BM25 branch, entity mining,
+section scoping (that no subgraph is held together by the corpus root alone, that
+a folder's own subject is refused as a bridge, that a short document cannot
+bridge to itself, and that flat titles still mine), the doc2doc channel (that it
+bridges a folder no entity can, that the rank ceiling and not the cosine is what
+rejects a trivial pair, that entity bridges are spent first, and that a
+similarity subgraph without a shared anchor in its facts never reaches the
+composer), the gates (including that
+`G_BROAD` really rejects a question that retrieves its own gold, and that `G_MIN`
+stops at the fact floor), gap aggregation, density percentiles, distractor
+verification, marker containment, MinHash de-duplication, a full end-to-end run
+and resume idempotency.

@@ -133,6 +133,29 @@ def park_doc(i: int, rng: random.Random) -> tuple[str, list[str]]:
     ]
 
 
+def doc_title(file_name: str) -> str:
+    """A breadcrumb title, as the real corpora carry: the document's path in the
+    knowledge base, not a headline. S1 mines within a folder of this path, so the
+    demo corpus has to have folders — with a flat name it would only ever
+    exercise the unscoped fallback. Companies and the joint programmes that
+    reference them share a branch, which is where the cross-document bridges
+    are; the parks are a separate branch that must not bridge into them.
+    """
+    stem = file_name.removesuffix(".txt")
+    is_summary = stem.endswith("_svod")
+    kind, num = stem.removesuffix("_svod").split("_")
+    i = int(num)
+    if kind == "park":
+        branch, folder, leaf = "Заповедники", "Национальные парки", f"Парк «{PARKS[i][0]}»"
+    elif kind == "project":
+        branch, folder = "Морская электроника", "Совместные программы"
+        leaf = f"Программа «Открытое море {2016 + i}»"
+    else:
+        branch, folder = "Морская электроника", "Профили компаний"
+        leaf = f"Компания «{ORGS[i][0]}»"
+    return f"База знаний/{branch}/{'Сводные обзоры' if is_summary else folder}/{leaf}"
+
+
 def build() -> list[dict]:
     rng = random.Random(7)
     docs: list[tuple[str, list[str]]] = []
@@ -155,7 +178,7 @@ def build() -> list[dict]:
         for idx, text in enumerate(paras):
             rows.append({"file_name": file_name, "index": idx, "raw_text": text,
                          "document_id": file_name.replace(".txt", ""),
-                         "title": file_name.replace(".txt", "").replace("_", " ")})
+                         "title": doc_title(file_name)})
     return rows
 
 
