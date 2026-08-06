@@ -372,7 +372,16 @@ because the cards are pure template:
 
 | corpus | docs | chunks | avg chunk | exact dup | structural dup | Jaccard |
 |---|---|---|---|---|---|---|
-| `kaggle_biggest` | 4 519 | 13 565 | 409 | 10.7 % | 70.0 % | 0.75 |
+| `kaggle_biggest` alone | 4 519 | 13 565 | 409 | 10.7 % | 70.0 % | 0.75 |
+| **all three merged** | **782 583** | **2 151 681** | **355** | **7.1 %** | **78.4 %** | **0.68** |
+
+The merged corpus is 765 M characters over 782 583 procurements
+(`hf_medicines` 578 064 + `zakupkihack` 200 000 + `kaggle_biggest` 4 519), at
+2.75 chunks per document, with no document dropped for being too thin. 78 % of
+chunks sit in a structural group — same template, different customer and amount
+— which is the material the dataset is for; only 7 % are exact duplicates, and
+the largest verbatim-identical group is 907 chunks (it was 22 129 before short
+trailing sections were folded backwards).
 
 **The three dumps do not overlap.** Merging folded zero records across sources —
 they are different slices of the registry (biggest tenders / drug procurement /
