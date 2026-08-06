@@ -114,7 +114,7 @@ def build_merged(specs: Iterable[SourceSpec], corpus_path: str, *,
     dump does not fit in memory, and the duplicate report is computed afterwards
     by re-reading the corpus file.
     """
-    opts = opts or ChunkOptions(merge_below=0, min_chars=40)
+    opts = opts or ChunkOptions(merge_below=250, min_chars=40)
     for path in (corpus_path, meta_path, docs_path):
         if path:
             ensure_parent(path)

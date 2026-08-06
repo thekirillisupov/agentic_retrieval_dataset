@@ -480,9 +480,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     t.add_argument("--no-docs", action="store_true")
     t.add_argument("--limit", type=int, default=0, help="stop after N documents")
     t.add_argument("--max-chars", type=int, default=1400)
-    t.add_argument("--merge-below", type=int, default=0,
-                   help="0 keeps each section its own chunk — record cards are short "
-                        "and a one-chunk document cannot form a window")
+    t.add_argument("--merge-below", type=int, default=250,
+                   help="fold sections shorter than this into a neighbour. 0 keeps "
+                        "every section separate, which leaves one-line sections that "
+                        "thousands of documents share verbatim")
     t.add_argument("--min-chars", type=int, default=40)
     t.add_argument("--max-chunks-per-doc", type=int, default=40)
     t.add_argument("--examples", type=int, default=5)
@@ -502,7 +503,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="column overrides applied to every source")
     m.add_argument("--delimiter", default="")
     m.add_argument("--max-chars", type=int, default=1400)
-    m.add_argument("--merge-below", type=int, default=0)
+    m.add_argument("--merge-below", type=int, default=250,
+                   help="fold sections shorter than this into a neighbour "
+                        "(default 250; see the README for the trade-off)")
     m.add_argument("--min-chars", type=int, default=40)
     m.add_argument("--max-chunks-per-doc", type=int, default=40)
     m.add_argument("--examples", type=int, default=5)

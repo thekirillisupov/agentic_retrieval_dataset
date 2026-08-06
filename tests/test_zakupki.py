@@ -19,7 +19,8 @@ from arqg.utils import read_jsonl
 from arqg.zakupki.client import EisError, build_envelope, parse_response
 from arqg.zakupki.corpus import (ChunkOptions, build_corpus, chunk_document,
                                  duplicate_report, jaccard)
-from arqg.zakupki.parse import iter_documents, parse_path, parse_xml
+from arqg.zakupki.parse import (ProcurementDoc, Section, iter_documents,
+                                parse_path, parse_xml)
 from arqg.zakupki.facets import Facets, SourceRef
 from arqg.zakupki.merge import (SourceSpec, build_merged, is_mergeable,
                                 merge_sources)
@@ -579,3 +580,25 @@ def test_portal_url_is_rebuilt_from_the_registry_number():
     # nothing recognisable: keep whatever link the dump gave us
     f = _facets("pn_lot_1", url="https://example.org/search?q=1")
     assert f.notice_url == "https://example.org/search?q=1"
+
+
+def test_short_trailing_section_folds_backwards(tmp_path):
+    """Forward merging cannot reach the last section — it has nothing to absorb."""
+    path = _dump(tmp_path, [_kaggle_row()], KAGGLE_HEADER)
+    doc = next(iter(iter_docs(path, PROFILES["kaggle_biggest"])))
+    assert [s.title for s in doc.sections][-1] == "Результаты определения поставщика"
+
+    alone = chunk_document(doc, ChunkOptions(merge_below=0, min_chars=40))
+    folded = chunk_document(doc, ChunkOptions(merge_below=250, min_chars=40))
+    assert alone[-1].startswith("Результаты определения поставщика")
+    assert len(folded) < len(alone)
+    assert "Результаты определения поставщика" in folded[-1]
+    assert "Начальная (максимальная) цена" in folded[-1]   # folded into its neighbour
+
+
+def test_backward_fold_never_leaves_a_single_chunk():
+    doc = ProcurementDoc(doc_type="x", doc_id="1", title="t", sections=[
+        Section("Первая", ["Короткая секция."]),
+        Section("Вторая", ["Тоже короткая."]),
+    ])
+    assert len(chunk_document(doc, ChunkOptions(merge_below=5000, min_chars=5))) == 2

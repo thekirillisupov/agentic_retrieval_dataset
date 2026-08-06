@@ -305,6 +305,30 @@ What each step buys, since none of it is cosmetic:
   embedding it, so the title is the one place where the document's facets reach
   *every* chunk — including the ones that never mention the customer or the year.
 
+### Why `--merge-below` defaults to 250
+
+A card renders as five short sections, and one section per chunk looks tidy until
+you count duplicates: the closing section («Этап определения поставщика —
+признана несостоявшейся.») is a one-liner that thousands of documents share
+*verbatim*, and a chunk 2 929 documents have in common can never be anyone's gold
+passage. Forward merging cannot fix it — the last section has nothing after it to
+absorb — so short trailing sections fold backwards instead, and `min_chunks`
+stops any merge that would leave a document unable to form a neighbour window.
+
+Measured over the 4 519-document PDDL dump:
+
+| `--merge-below` | chunks/doc | avg chunk | exact dup | largest exact group | structural dup |
+|---|---|---|---|---|---|
+| 0 | 5.00 | 245 | 39.2 % | **2 929** | 82.4 % |
+| **250** (default) | 3.00 | 409 | 10.7 % | **33** | 70.0 % |
+| 350 | 2.33 | 528 | 5.1 % | 9 | 52.7 % |
+
+250 is where the degenerate exact duplicates collapse (2 929 → 33) while the
+structural near-duplicates — the property the corpus is *for* — are still at
+70 %. Past that the chunks get long enough that documents approach the two-chunk
+floor and the template structure washes out. No documents are lost at any of the
+three settings.
+
 ### Metadata
 
 Two levels, because the split matters for size: repeating the document's
@@ -348,22 +372,27 @@ because the cards are pure template:
 
 | corpus | docs | chunks | avg chunk | exact dup | structural dup | Jaccard |
 |---|---|---|---|---|---|---|
-| `kaggle_biggest` | 4 519 | 22 595 | 204 | 39.1 % | 82.4 % | 0.89 |
-| `zakupkihack` (200k rows) | 200 000 | 612 246 | 268 | 15.1 % | 71.0 % | 0.94 |
-| `hf_medicines` (30k rows) | 30 000 | 149 987 | 177 | 30.0 % | 89.3 % | 0.95 |
+| `kaggle_biggest` | 4 519 | 13 565 | 409 | 10.7 % | 70.0 % | 0.75 |
+
+**The three dumps do not overlap.** Merging folded zero records across sources —
+they are different slices of the registry (biggest tenders / drug procurement /
+2019-2020 lots), and `zakupkihack` anonymises its numbers so it can never match
+anything. The merge machinery is exercised by the tests, but on *these* sources
+it amounts to a concatenation onto a shared schema. It will matter the moment a
+fourth source overlaps one of them, or when the XML path fills in the same
+procurements with full document text.
 
 So: use a dump to develop and calibrate the pipeline today, and re-run the XML
-path once a token arrives if you need the full document text. `from-table`
-defaults to `--merge-below 0` because a card merged into one chunk can never form
-a neighbour window; the command warns if any document ends up with a single
-chunk.
+path once a token arrives if you need the full document text — the two paths land
+in the same document model, so a corpus built from dumps is not thrown away when
+the token turns up.
 
 Dead ends, so you don't retry them: the FTP dump (closed 2025-01-01),
 `opendata.gov.ru` and `data.gov.ru` (unreachable), `api.clearspending.ru` (bare
 nginx — the Госзатраты API is gone). Scraping the portal's server-rendered HTML
 still works for anyone with a Russian IP, but it is not implemented here.
 
-### Run
+### Run: the token path
 
 ```bash
 # 0. keep the live schema next to the data: element order is validated

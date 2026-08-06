@@ -26,7 +26,7 @@ import hashlib
 import json
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Iterator
 
 from ..utils import ensure_parent, log, write_jsonl
@@ -40,9 +40,10 @@ _TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 @dataclass
 class ChunkOptions:
     max_chars: int = 1400        # hard cap on a chunk
-    merge_below: int = 600       # sections shorter than this may absorb the next one
+    merge_below: int = 600       # sections shorter than this may absorb a neighbour
     min_chars: int = 120         # drop chunks with less signal than this
     max_chunks_per_doc: int = 40
+    min_chunks: int = 2          # never merge a document below this, if it can be helped
 
 
 def _normalise(text: str) -> str:
@@ -99,8 +100,22 @@ def _split_section(sec: Section, opts: ChunkOptions) -> list[str]:
 
 
 def chunk_document(doc: ProcurementDoc, opts: ChunkOptions | None = None) -> list[str]:
-    """Chunk texts for one document, in document order."""
+    """Chunk texts for one document, in document order.
+
+    Merging is capped by ``min_chunks``: a document that *can* yield a neighbour
+    window must not lose that ability to tidier chunking. If the merged result
+    falls below the floor, the unmerged one is used instead.
+    """
     opts = opts or ChunkOptions()
+    texts = _chunk(doc, opts)
+    if len(texts) < opts.min_chunks and opts.merge_below > 0:
+        unmerged = _chunk(doc, replace(opts, merge_below=0))
+        if len(unmerged) > len(texts):
+            return unmerged
+    return texts
+
+
+def _chunk(doc: ProcurementDoc, opts: ChunkOptions) -> list[str]:
     texts: list[str] = []
     pending: Section | None = None
 
@@ -117,6 +132,17 @@ def chunk_document(doc: ProcurementDoc, opts: ChunkOptions | None = None) -> lis
         texts.extend(_split_section(pending, opts))
 
     texts = [t for t in texts if len(t) >= opts.min_chars]
+
+    # Forward merging cannot help the *last* section: there is nothing after it
+    # to absorb. Left alone, a one-line closing section («Этап определения
+    # поставщика — признана несостоявшейся.») becomes a chunk thousands of
+    # documents share verbatim, which can never serve as anyone's gold passage.
+    # Fold it backwards instead — but never down to a single chunk, or the
+    # document stops being able to form a neighbour window at all.
+    if len(texts) > 2 and len(texts[-1]) < opts.merge_below \
+            and len(texts[-2]) + len(texts[-1]) + 2 <= opts.max_chars:
+        texts[-2:] = ["\n\n".join(texts[-2:])]
+
     if len(texts) > opts.max_chunks_per_doc:
         log.debug("zakupki: %s truncated %d -> %d chunks",
                   doc.file_name, len(texts), opts.max_chunks_per_doc)
