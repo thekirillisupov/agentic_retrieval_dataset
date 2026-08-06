@@ -1,0 +1,249 @@
+"""Offline tests for the ЕИС / zakupki.gov.ru export (no network, no token).
+
+The network half is exercised at the envelope/response level only: zakupki.gov.ru
+refuses connections from non-Russian address space, so a live call cannot be part
+of a test suite. Everything downstream of the raw archive is fully covered.
+"""
+import io
+import os
+import sys
+import zipfile
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from arqg.utils import read_jsonl
+from arqg.zakupki.client import EisError, build_envelope, parse_response
+from arqg.zakupki.corpus import (ChunkOptions, build_corpus, chunk_document,
+                                 duplicate_report, jaccard)
+from arqg.zakupki.parse import iter_documents, parse_path, parse_xml
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SAMPLE_XML = os.path.join(HERE, "sample_zakupki_notification.xml")
+
+
+def _sample_bytes() -> bytes:
+    with open(SAMPLE_XML, "rb") as f:
+        return f.read()
+
+
+def _variant(n: int) -> bytes:
+    """Same template, different customer / dates / amounts — a real near-duplicate."""
+    text = _sample_bytes().decode("utf-8")
+    return (text
+            .replace("0173200001425000417", f"01732000014250004{17 + n:02d}")
+            .replace("«Городская поликлиника № 14»", f"«Городская поликлиника № {14 + n}»")
+            .replace("1487300.50", f"{1487300.50 + n * 1000:.2f}")
+            .replace("2025-06-19", f"2025-06-{19 + n % 5:02d}")
+            .encode("utf-8"))
+
+
+# --------------------------------------------------------------------------- #
+# envelope / response
+# --------------------------------------------------------------------------- #
+def test_envelope_preserves_tag_order():
+    env = build_envelope(
+        "getDocsByOrgRegionRequest",
+        [("selectionParams", [
+            ("orgRegion", "72"),
+            ("subsystemType", "PRIZ"),
+            ("documentType44", "epNotificationEF2020"),
+            ("periodInfo", [("exactDate", "2025-06-11")]),
+        ])],
+        namespace="http://zakupki.gov.ru/fz44/get-docs-ip/ws",
+        token="tok-1", request_id="req-1", created="2025-06-11T10:00:00")
+
+    assert "<individualPerson_token>tok-1</individualPerson_token>" in env
+    # index first, then the selection params in exactly the order given
+    order = [env.index(t) for t in ("<index>", "<id>req-1</id>", "<mode>PROD</mode>",
+                                    "<orgRegion>", "<subsystemType>",
+                                    "<documentType44>", "<exactDate>")]
+    assert order == sorted(order)
+
+
+def test_envelope_escapes_and_drops_empties():
+    env = build_envelope("getDocsByReestrNumberRequest",
+                         [("selectionParams", [("subsystemType", "PRIZ"),
+                                               ("reestrNumber", "a&b"),
+                                               ("unused", "")])],
+                         namespace="ns", token="t<k")
+    assert "<reestrNumber>a&amp;b</reestrNumber>" in env
+    assert "&lt;k" in env
+    assert "<unused>" not in env
+
+
+def test_parse_response_reads_archive_urls_regardless_of_prefix():
+    xml = """<?xml version="1.0"?>
+    <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+      <soap:Body><ns7:getDocsByOrgRegionResponse xmlns:ns7="urn:x">
+        <dataInfo><archiveUrl>https://int44.zakupki.gov.ru/a/1.zip</archiveUrl></dataInfo>
+        <dataInfo><archiveUrl>https://int44.zakupki.gov.ru/a/2.zip</archiveUrl></dataInfo>
+      </ns7:getDocsByOrgRegionResponse></soap:Body></soap:Envelope>"""
+    assert parse_response(xml) == ["https://int44.zakupki.gov.ru/a/1.zip",
+                                   "https://int44.zakupki.gov.ru/a/2.zip"]
+
+
+def test_parse_response_raises_on_fault():
+    xml = """<?xml version="1.0"?>
+    <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+      <soap:Body><soap:Fault>
+        <faultcode>soap:Server</faultcode>
+        <faultstring>Некорректный токен</faultstring>
+      </soap:Fault></soap:Body></soap:Envelope>"""
+    with pytest.raises(EisError, match="Некорректный токен"):
+        parse_response(xml)
+
+
+def test_parse_response_empty_selection_is_not_an_error():
+    xml = """<?xml version="1.0"?>
+    <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+      <soap:Body><getDocsByOrgRegionResponse/></soap:Body></soap:Envelope>"""
+    assert parse_response(xml) == []
+
+
+# --------------------------------------------------------------------------- #
+# parsing
+# --------------------------------------------------------------------------- #
+def test_parse_notification_fields_and_sections():
+    doc = parse_xml(_sample_bytes(), SAMPLE_XML)
+    assert doc is not None
+    assert doc.doc_type == "epNotificationEF2020"
+    assert doc.doc_id == "0173200001425000417"
+    assert doc.file_name == "epNotificationEF2020_0173200001425000417.xml"
+    assert "Поставка бумаги офисной" in doc.title
+
+    body = "\n".join(s.text() for s in doc.sections)
+    assert "Номер извещения: 0173200001425000417" in body
+    assert "ИНН: 7203001234" in body
+    assert "Электронный аукцион" in body
+    # dates and money are humanised
+    assert "11.06.2025 09:14" in body
+    assert "1 487 300,50 руб." in body
+    # signature blobs never reach the text
+    assert "MIIJ0AYJKoZIhvcNAQcC" not in body
+
+
+def test_repeated_elements_stay_distinguishable():
+    doc = parse_xml(_sample_bytes(), SAMPLE_XML)
+    body = "\n".join(s.text() for s in doc.sections)
+    assert "Объект закупки 1" in body and "Объект закупки 2" in body
+    # each position keeps its own quantity, so the two are not interchangeable
+    assert "Количество: 1200" in body and "Количество: 310" in body
+
+
+def test_unknown_tags_degrade_to_readable_labels():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+    <export xmlns="urn:x"><someNewDoc2027>
+      <purchaseNumber>123</purchaseNumber>
+      <brandNewFieldName>значение</brandNewFieldName>
+      <nested><anotherOne>42</anotherOne></nested>
+    </someNewDoc2027></export>""".encode("utf-8")
+    doc = parse_xml(xml, "new.xml")
+    body = "\n".join(s.text() for s in doc.sections)
+    assert "Brand new field name: значение" in body
+    assert "Another one: 42" in body
+
+
+def test_unparseable_xml_returns_none():
+    assert parse_xml(b"<not xml", "broken.xml") is None
+
+
+def test_iter_documents_reads_nested_zips(tmp_path):
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as zf:
+        zf.writestr("notice.xml", _sample_bytes())
+    outer = tmp_path / "archive.zip"
+    with zipfile.ZipFile(outer, "w") as zf:
+        zf.writestr("day1/inner.zip", inner.getvalue())
+        zf.writestr("day1/other.xml", _variant(1))
+        zf.writestr("readme.txt", b"ignored")
+    names = [n for n, _ in iter_documents(str(outer))]
+    assert len(names) == 2
+    assert all(n.endswith(".xml") for n in names)
+
+
+# --------------------------------------------------------------------------- #
+# chunking
+# --------------------------------------------------------------------------- #
+def test_chunks_are_ordered_and_bounded():
+    doc = parse_xml(_sample_bytes(), SAMPLE_XML)
+    opts = ChunkOptions(max_chars=600, merge_below=200, min_chars=50)
+    texts = chunk_document(doc, opts)
+    assert len(texts) >= 2
+    assert all(len(t) <= 600 + 200 for t in texts)   # split happens on line bounds
+    assert texts[0].startswith("Общие сведения")
+
+
+def test_long_section_split_repeats_its_header():
+    doc = parse_xml(_sample_bytes(), SAMPLE_XML)
+    texts = chunk_document(doc, ChunkOptions(max_chars=260, merge_below=0, min_chars=20))
+    assert any("(продолжение" in t for t in texts)
+
+
+def test_build_corpus_emits_pipeline_schema(tmp_path):
+    archive = tmp_path / "raw" / "a.zip"
+    archive.parent.mkdir(parents=True)
+    with zipfile.ZipFile(archive, "w") as zf:
+        for i in range(4):
+            zf.writestr(f"n{i}.xml", _variant(i))
+
+    corpus = tmp_path / "zakupki_index.jsonl"
+    stats = build_corpus(parse_path(str(tmp_path / "raw")), str(corpus),
+                         docs_path=str(tmp_path / "docs.jsonl"))
+    assert stats["n_documents"] == 4
+    assert stats["document_types"] == {"epNotificationEF2020": 4}
+
+    records = list(read_jsonl(str(corpus)))
+    assert records and stats["n_chunks"] == len(records)
+    for rec in records:
+        assert set(rec) == {"file_name", "index", "raw_text", "document_id", "title"}
+        assert rec["raw_text"].strip()
+    # index is 0-based and contiguous per file — arqg.windows relies on index ± 1
+    per_file = {}
+    for rec in records:
+        per_file.setdefault(rec["file_name"], []).append(rec["index"])
+    for name, idx in per_file.items():
+        assert idx == list(range(len(idx))), name
+    assert len(per_file) == 4
+
+
+def test_duplicate_file_names_are_emitted_once(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    for name in ("first.xml", "second.xml"):          # same purchase, fetched twice
+        (raw / name).write_bytes(_sample_bytes())
+    corpus = tmp_path / "c.jsonl"
+    stats = build_corpus(parse_path(str(raw)), str(corpus))
+    assert stats["n_documents"] == 2
+    assert len({r["file_name"] for r in read_jsonl(str(corpus))}) == 1
+
+
+# --------------------------------------------------------------------------- #
+# near-duplicate report — the reason this source exists
+# --------------------------------------------------------------------------- #
+def test_report_separates_exact_from_structural_duplicates(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    for i in range(6):
+        (raw / f"n{i}.xml").write_bytes(_variant(i))
+    corpus = tmp_path / "c.jsonl"
+    build_corpus(parse_path(str(raw)), str(corpus))
+    records = list(read_jsonl(str(corpus)))
+
+    report = duplicate_report(records)
+    assert report["n_documents"] == 6
+    # boilerplate (требования к участникам) repeats verbatim across notifications
+    assert report["exact_duplicates"]["n_groups"] >= 1
+    # ... and the amount/date-bearing passages are template-identical, not exact
+    structural = report["structural_duplicates"]
+    assert structural["n_groups"] >= report["exact_duplicates"]["n_groups"]
+    assert structural["share_of_chunks"] > report["exact_duplicates"]["share_of_chunks"]
+    assert structural["mean_jaccard_within_group"] > 0.5
+    assert structural["examples"][0]["group_size"] >= 2
+
+
+def test_jaccard_is_bounded():
+    a = "поставка бумаги офисной а4 для нужд учреждения в срок до 30 сентября"
+    assert jaccard(a, a) == 1.0
+    assert jaccard(a, "совершенно другой текст про строительство моста") == 0.0

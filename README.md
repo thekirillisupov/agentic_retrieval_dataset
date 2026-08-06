@@ -159,6 +159,111 @@ One JSON object per line (`.jsonl`), a `.json` array, or a directory of either:
 
 ---
 
+## Corpus source: ЕИС / zakupki.gov.ru (44-ФЗ)
+
+Procurement documentation is the densest **near-duplicate** material available in
+Russian. Every notification is generated from the same regulated template, so
+thousands of documents differ only in the customer, the object of purchase, the
+deadlines and the amounts — exactly the distractor structure SID otherwise has to
+synthesise (`L1_transplant` / `L2_perturbed`). A retriever that survives this
+corpus is not matching on surface form.
+
+`scripts/build_zakupki_corpus.py` has two halves that are deliberately separate,
+because the machine with ЕИС access usually is not the machine that builds
+datasets:
+
+| | needs | does |
+|---|---|---|
+| `fetch` | token **and** a Russian IP | calls the data services, saves raw archives + a resume manifest |
+| `build` / `stats` | nothing | archives → chunks JSONL + a near-duplicate report |
+
+### Access (2025+ — every older guide is wrong here)
+
+* **The FTP dump is gone.** `ftp://fz223free@ftp.zakupki.gov.ru`, which every
+  Habr/vc.ru recipe uses, was shut down on **2025-01-01**. Those recipes do not
+  work, at all.
+* Everything now goes through the data services at
+  `https://int44.zakupki.gov.ru/eis-integration/services/`, and every call needs
+  credentials:
+  * **физлицо** — a token from <https://zakupki.gov.ru/pmd/auth/welcome> (login
+    via Госуслуги → «Регистрация нового потребителя машиночитаемых данных» →
+    «Физическое лицо»), sent in the `individualPerson_token` SOAP header.
+    Endpoint `getDocsIP`. This is the path implemented here.
+  * **юрлицо** — requests signed with a qualified ЭЦП against `getDocsLE2`.
+    The ГОСТ-signing infrastructure is *not* implemented; only the token flow is.
+* The token is needed **again** on the archive download, as an HTTP header — the
+  `archiveUrl` you get back is not public.
+* **Geo-block.** zakupki.gov.ru resets TLS from non-Russian address space, so
+  `fetch` must run from a Russian IP whatever your credentials say. `build` never
+  touches the network.
+* Third-party archive dumps exist as a fallback, but check their freshness and
+  licence yourself — this repo does not depend on any.
+
+### Run
+
+```bash
+# 0. keep the live schema next to the data: element order is validated
+#    positionally and the schemas are revised a few times a year
+python scripts/build_zakupki_corpus.py xsd --out data/zakupki/getDocsIP.xsd
+
+# 1. a month of electronic-auction notifications for two regions
+export EIS_TOKEN=5d035886-...
+python scripts/build_zakupki_corpus.py fetch \
+    --regions 72,77 --doc-types epNotificationEF2020,epNotificationEOK2020 \
+    --date-from 2025-06-01 --date-to 2025-06-30 --raw-dir data/zakupki/raw
+
+# 2. build the corpus — offline, no token, resumable input
+python scripts/build_zakupki_corpus.py build \
+    --raw-dir data/zakupki/raw --out-dir data/zakupki
+
+# 3. feed SID
+python run_sid.py all --config config_sid.yaml \
+    --corpus data/zakupki/zakupki_index.jsonl
+```
+
+`fetch` walks the region × document-type × day grid (the service's own
+granularity is one day), paces itself against the per-consumer quota, skips
+archives already in the manifest, and keeps going when a single cell fails.
+
+### What `build` produces
+
+XML → ordered, Russian-labelled sections → chunks in the pipeline's input format.
+The parser is **schema-tolerant on purpose**: 44-ФЗ schemas are versioned
+(`…EF2020`, `…EF2023`) and revised often, so instead of a per-type field map it
+walks any document generically, translating tags through a dictionary and
+de-camel-casing the ones it does not know. A schema revision costs you an uglier
+label, not a dropped field. Signature and certificate blobs are discarded;
+repeated elements (lots, positions, requirements) stay numbered so two positions
+of the same notification remain distinguishable.
+
+```
+data/zakupki/zakupki_index.jsonl      chunks: file_name / index / raw_text / document_id / title
+data/zakupki/zakupki_documents.jsonl  document-level dump (sections, metadata)
+data/zakupki/zakupki_report.json      near-duplicate report
+```
+
+### The near-duplicate report
+
+Two notions, and the difference between them is the point:
+
+* **exact** — identical after whitespace/case normalisation. Verbatim boilerplate
+  (единые требования к участникам, условия обеспечения). Genuinely
+  indistinguishable; no retriever can be blamed for confusing them.
+* **structural** — identical once every digit is masked. Same template,
+  *different* customer, deadline and price. Telling those apart is the skill the
+  dataset trains, so `structural_duplicates.share_of_chunks` is the number to
+  look at when deciding whether a slice of ЕИС is worth generating over.
+
+```
+— выгрузка ЕИС —
+документов:            60
+чанков:                312
+точные дубликаты:      3 групп, 39.1% чанков
+шаблонные дубликаты:   40 групп, 84.6% чанков, средний Jaccard 0.66
+```
+
+---
+
 ## Third generator: MuSiQue → multi-hop dialogue
 
 `scripts/build_musique_dialogues.py` builds a **conversational, anaphora-heavy**
@@ -355,3 +460,8 @@ python -m pytest tests/ -q
 ```
 Covers loading, filtering, window contiguity, JSON extraction, and a full mock-backed
 generate→verify run asserting the ≥2-gold invariant.
+
+`tests/test_zakupki.py` covers the ЕИС export offline: envelope tag order, SOAP
+fault handling, nested-zip walking, XML → sections, chunk contiguity and the
+duplicate report. The live call is not tested — zakupki.gov.ru is unreachable
+from outside Russia, so that path has to be exercised by hand from a Russian IP.
