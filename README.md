@@ -196,8 +196,58 @@ datasets:
 * **Geo-block.** zakupki.gov.ru resets TLS from non-Russian address space, so
   `fetch` must run from a Russian IP whatever your credentials say. `build` never
   touches the network.
-* Third-party archive dumps exist as a fallback, but check their freshness and
-  licence yourself — this repo does not depend on any.
+### No token? Third-party dumps (`from-table`)
+
+A ЕИС token needs a Госуслуги-verified account and does not arrive the same day,
+so there is a second path that works immediately. Several extracts of
+zakupki.gov.ru are published elsewhere and still download without credentials —
+these three were checked by hand and have a profile in `arqg/zakupki/tabular.py`:
+
+| profile | source | size | licence | content |
+|---|---|---|---|---|
+| `kaggle_biggest` | `kaggle.com/datasets/dadalyndell/russian-biggest-government-procurement-contracts` | 0.7 MB | **ODC PDDL** (public domain) | 4.5k tenders over 500 mln ₽, 2019-2023, 84 regions, winner + final price |
+| `zakupkihack` | `kaggle.com/datasets/mrmorj/zakupkihack-recsys` | 153 MB | **not declared** — check before redistributing | ~0.5M+ lots, 2019-2020, 44/223-ФЗ, ОКПД2 + item descriptions; procurement numbers anonymised |
+| `hf_medicines` | `huggingface.co/datasets/zavzyatiy/medicines_from_zakupki_gov_ru` | 63 MB | **Apache-2.0** | drug procurement only, 2015-2025, НМЦК + contract price |
+
+Kaggle serves these over its public API without a key:
+
+```bash
+curl -L -o dump.zip \
+  https://www.kaggle.com/api/v1/datasets/download/dadalyndell/russian-biggest-government-procurement-contracts
+unzip dump.zip
+
+python scripts/build_zakupki_corpus.py from-table \
+    --input tender_data.csv --out-dir data/zakupki
+```
+
+The profile is detected from the header; anything else goes through
+`--profile generic` with explicit `--column canonical=source` pairs. Unmapped
+columns are ignored rather than guessed at — a mis-mapped ИНН would quietly
+poison entity mining downstream. Reading `.xlsx` needs `openpyxl`.
+
+**What you give up.** These are *record cards, not documents*: a row carries the
+notification's key fields, not its text, so it renders as three to five short
+sections where a real XML document gives a dozen. Chunks are ~180-270 characters
+against ~730 for the XML path, and there is no обеспечение/требования/сроки
+prose. The near-duplicate property survives intact — better than intact, in fact,
+because the cards are pure template:
+
+| corpus | docs | chunks | avg chunk | exact dup | structural dup | Jaccard |
+|---|---|---|---|---|---|---|
+| `kaggle_biggest` | 4 519 | 22 595 | 204 | 39.1 % | 82.4 % | 0.89 |
+| `zakupkihack` (200k rows) | 200 000 | 612 246 | 268 | 15.1 % | 71.0 % | 0.94 |
+| `hf_medicines` (30k rows) | 30 000 | 149 987 | 177 | 30.0 % | 89.3 % | 0.95 |
+
+So: use a dump to develop and calibrate the pipeline today, and re-run the XML
+path once a token arrives if you need the full document text. `from-table`
+defaults to `--merge-below 0` because a card merged into one chunk can never form
+a neighbour window; the command warns if any document ends up with a single
+chunk.
+
+Dead ends, so you don't retry them: the FTP dump (closed 2025-01-01),
+`opendata.gov.ru` and `data.gov.ru` (unreachable), `api.clearspending.ru` (bare
+nginx — the Госзатраты API is gone). Scraping the portal's server-rendered HTML
+still works for anyone with a Russian IP, but it is not implemented here.
 
 ### Run
 
@@ -207,6 +257,7 @@ datasets:
 python scripts/build_zakupki_corpus.py xsd --out data/zakupki/getDocsIP.xsd
 
 # 1. a month of electronic-auction notifications for two regions
+#    (needs the token; see "No token?" above for the dump path)
 export EIS_TOKEN=5d035886-...
 python scripts/build_zakupki_corpus.py fetch \
     --regions 72,77 --doc-types epNotificationEF2020,epNotificationEOK2020 \

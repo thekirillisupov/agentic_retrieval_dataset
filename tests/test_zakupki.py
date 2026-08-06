@@ -4,10 +4,12 @@ The network half is exercised at the envelope/response level only: zakupki.gov.r
 refuses connections from non-Russian address space, so a live call cannot be part
 of a test suite. Everything downstream of the raw archive is fully covered.
 """
+import csv
 import io
 import os
 import sys
 import zipfile
+from dataclasses import replace
 
 import pytest
 
@@ -18,6 +20,8 @@ from arqg.zakupki.client import EisError, build_envelope, parse_response
 from arqg.zakupki.corpus import (ChunkOptions, build_corpus, chunk_document,
                                  duplicate_report, jaccard)
 from arqg.zakupki.parse import iter_documents, parse_path, parse_xml
+from arqg.zakupki.tabular import (PROFILES, detect_profile, iter_docs,
+                                  parse_column_overrides)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAMPLE_XML = os.path.join(HERE, "sample_zakupki_notification.xml")
@@ -191,7 +195,7 @@ def test_build_corpus_emits_pipeline_schema(tmp_path):
     corpus = tmp_path / "zakupki_index.jsonl"
     stats = build_corpus(parse_path(str(tmp_path / "raw")), str(corpus),
                          docs_path=str(tmp_path / "docs.jsonl"))
-    assert stats["n_documents"] == 4
+    assert stats["n_documents_parsed"] == 4
     assert stats["document_types"] == {"epNotificationEF2020": 4}
 
     records = list(read_jsonl(str(corpus)))
@@ -215,7 +219,7 @@ def test_duplicate_file_names_are_emitted_once(tmp_path):
         (raw / name).write_bytes(_sample_bytes())
     corpus = tmp_path / "c.jsonl"
     stats = build_corpus(parse_path(str(raw)), str(corpus))
-    assert stats["n_documents"] == 2
+    assert stats["n_documents_parsed"] == 2
     assert len({r["file_name"] for r in read_jsonl(str(corpus))}) == 1
 
 
@@ -232,7 +236,7 @@ def test_report_separates_exact_from_structural_duplicates(tmp_path):
     records = list(read_jsonl(str(corpus)))
 
     report = duplicate_report(records)
-    assert report["n_documents"] == 6
+    assert report["n_files"] == 6
     # boilerplate (требования к участникам) repeats verbatim across notifications
     assert report["exact_duplicates"]["n_groups"] >= 1
     # ... and the amount/date-bearing passages are template-identical, not exact
@@ -247,3 +251,116 @@ def test_jaccard_is_bounded():
     a = "поставка бумаги офисной а4 для нужд учреждения в срок до 30 сентября"
     assert jaccard(a, a) == 1.0
     assert jaccard(a, "совершенно другой текст про строительство моста") == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# third-party dumps (the no-token path)
+# --------------------------------------------------------------------------- #
+def _dump(tmp_path, rows, header, sep=","):
+    path = tmp_path / "dump.csv"
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f, delimiter=sep)
+        w.writerow(header)
+        w.writerows(rows)
+    return str(path)
+
+
+KAGGLE_HEADER = ["tender_id", "tender_name", "start_price", "tender_security",
+                 "advance_money", "currency", "publication_date", "selection_phase",
+                 "legislation", "url", "procedure", "for_small_business",
+                 "customer_region_code", "customer_region", "customer_name",
+                 "customer_inn", "winner_name", "winner_inn", "final_price"]
+
+
+def _kaggle_row(n=0):
+    return [f"017320000142500{400 + n:04d}",
+            "Выполнение работ по капитальному ремонту кровли",
+            f"{571883910 + n}.00", "28594195.50", "30.00%", "RUB",
+            "2020-08-11 16:27:33", "Признана несостоявшейся", "44-ФЗ",
+            "https://zakupki.gov.ru/epz/order/notice/ea44/view/common-info.html",
+            "Электронный аукцион", "FALSE", "52", "Нижегородская область",
+            "Администрация Вачского Муниципального Района", "5208002260", "", "", ""]
+
+
+def test_profile_is_detected_from_the_header(tmp_path):
+    path = _dump(tmp_path, [_kaggle_row()], KAGGLE_HEADER)
+    profile = detect_profile(path)
+    assert profile is not None and profile.name == "kaggle_biggest"
+    assert "PDDL" in profile.licence
+
+
+def test_row_renders_the_same_sections_as_an_xml_document(tmp_path):
+    path = _dump(tmp_path, [_kaggle_row()], KAGGLE_HEADER)
+    docs = list(iter_docs(path, PROFILES["kaggle_biggest"]))
+    assert len(docs) == 1
+    doc = docs[0]
+    assert doc.doc_id == "0173200001425000400"
+    assert doc.file_name.endswith(".txt")     # a card, not an EIS XML document
+    body = "\n".join(s.text() for s in doc.sections)
+    assert "Начальная (максимальная) цена контракта: 571 883 910,00 руб." in body
+    assert "Дата размещения: 11.08.2020 16:27" in body
+    assert "Закупка у субъектов малого предпринимательства: нет" in body
+    assert [s.title for s in doc.sections][:2] == ["Общие сведения", "Объект закупки"]
+
+
+def test_empty_columns_are_dropped_not_rendered_blank(tmp_path):
+    path = _dump(tmp_path, [_kaggle_row()], KAGGLE_HEADER)
+    doc = next(iter(iter_docs(path, PROFILES["kaggle_biggest"])))
+    body = "\n".join(s.text() for s in doc.sections)
+    assert "Победитель" not in body          # winner_name is empty in this row
+    assert ": \n" not in body and not body.endswith(": ")
+
+
+def test_doc_id_recovered_when_the_id_column_lost_digits(tmp_path):
+    """XLSX dumps store 19-digit numbers as floats; the tail is gone for good."""
+    path = _dump(tmp_path, [["1.762000055240009e+17",
+                             "https://www.rts-tender.ru/x/number/0176200005524000887/etpName/fks",
+                             "Поставка лекарственных препаратов"]],
+                 ["Num_trade", "Trade", "Name"])
+    profile = replace(PROFILES["hf_medicines"],
+                      columns={"doc_id": "Num_trade", "url": "Trade", "subject": "Name"})
+    doc = next(iter(iter_docs(path, profile)))
+    assert doc.doc_id == "0176200005524000887"
+    assert "Номер закупки: 0176200005524000887" in doc.sections[0].text()
+
+
+def test_distinct_rows_do_not_collapse_onto_one_document(tmp_path):
+    path = _dump(tmp_path, [_kaggle_row(i) for i in range(5)], KAGGLE_HEADER)
+    corpus = tmp_path / "c.jsonl"
+    stats = build_corpus(iter_docs(path, PROFILES["kaggle_biggest"]), str(corpus),
+                         opts=ChunkOptions(merge_below=0, min_chars=40))
+    assert stats["n_documents_parsed"] == stats["n_files"] == 5
+    # every card must yield ≥2 chunks or it can never form a neighbour window
+    per_file = {}
+    for rec in read_jsonl(str(corpus)):
+        per_file[rec["file_name"]] = per_file.get(rec["file_name"], 0) + 1
+    assert min(per_file.values()) >= 2
+
+
+def test_semicolon_dump_with_law_codes(tmp_path):
+    header = ["pn_lot_anon", "fz", "region_code", "min_publish_date", "purchase_name",
+              "lot_name", "lot_price", "okpd2_code", "okpd2_names",
+              "additional_code", "additional_code_names", "item_descriptions"]
+    row = ["pn_lot_7031618", "44fz", "2", "2019-08-26",
+           "Услуги по проведению финансового аудита", "", "123500.0", "69.2",
+           "Услуги по проведению финансового аудита", "", "",
+           "Услуги по проведению финансового аудита"]
+    path = _dump(tmp_path, [row], header, sep=";")
+    assert detect_profile(path).name == "zakupkihack"
+    doc = next(iter(iter_docs(path, PROFILES["zakupkihack"])))
+    body = "\n".join(s.text() for s in doc.sections)
+    assert "Закон: 44-ФЗ" in body                     # 44fz -> 44-ФЗ
+    assert "Код ОКПД2: 69.2" in body
+
+
+def test_column_overrides_are_validated():
+    assert parse_column_overrides(["subject=tender_name"]) == {"subject": "tender_name"}
+    with pytest.raises(SystemExit, match="unknown field"):
+        parse_column_overrides(["nonsense=col"])
+    with pytest.raises(SystemExit, match="canonical=source"):
+        parse_column_overrides(["subject"])
+
+
+def test_unrecognised_dump_is_not_guessed_at(tmp_path):
+    path = _dump(tmp_path, [["a", "b"]], ["foo", "bar"])
+    assert detect_profile(path) is None

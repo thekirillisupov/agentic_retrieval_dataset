@@ -289,10 +289,11 @@ class ProcurementDoc:
     title: str
     sections: list[Section] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
+    file_ext: str = ".xml"              # ".txt" for cards rendered from a dump
 
     @property
     def file_name(self) -> str:
-        return f"{self.doc_type}_{self.doc_id}.xml"
+        return f"{self.doc_type}_{self.doc_id}{self.file_ext}"
 
     def to_dict(self) -> dict[str, Any]:
         return {"doc_type": self.doc_type, "doc_id": self.doc_id, "title": self.title,

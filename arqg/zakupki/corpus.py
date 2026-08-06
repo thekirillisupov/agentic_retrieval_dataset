@@ -133,8 +133,10 @@ def iter_chunk_records(docs: Iterable[ProcurementDoc],
     ``{file_name, index}`` pair would silently overwrite a chunk downstream.
     """
     seen_files: set[str] = set()
+    dropped = 0
     for doc in docs:
         if doc.file_name in seen_files:
+            dropped += 1
             log.debug("zakupki: %s already emitted, skipping duplicate", doc.file_name)
             continue
         seen_files.add(doc.file_name)
@@ -146,6 +148,10 @@ def iter_chunk_records(docs: Iterable[ProcurementDoc],
                 "document_id": doc.doc_id,
                 "title": doc.title,
             }
+    if dropped:
+        log.warning("zakupki: %d document(s) dropped as duplicate file names — "
+                    "a broken id column collapses distinct rows onto one document",
+                    dropped)
 
 
 def build_corpus(docs: Iterable[ProcurementDoc], corpus_path: str, *,
@@ -171,7 +177,8 @@ def build_corpus(docs: Iterable[ProcurementDoc], corpus_path: str, *,
         log.info("zakupki: wrote %d documents -> %s", len(doc_rows), docs_path)
 
     return {
-        "n_documents": len(materialised),
+        "n_documents_parsed": len(materialised),
+        "n_files": len({r["file_name"] for r in records}),
         "n_chunks": n,
         "n_chars": sum(len(r["raw_text"]) for r in records),
         "mean_chunk_chars": round(
@@ -227,7 +234,7 @@ def duplicate_report(records: Sequence[dict[str, Any]], *, examples: int = 5) ->
     template = _groups(records, _template_hash)
     return {
         "n_chunks": len(records),
-        "n_documents": len({r["file_name"] for r in records}),
+        "n_files": len({r["file_name"] for r in records}),
         "exact_duplicates": _summarise(records, exact, with_similarity=False, examples=examples),
         "structural_duplicates": _summarise(records, template, with_similarity=True,
                                             examples=examples),

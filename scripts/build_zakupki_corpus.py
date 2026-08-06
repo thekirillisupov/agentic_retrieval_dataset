@@ -58,6 +58,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import replace
 from typing import Iterable
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -67,6 +68,8 @@ from arqg.zakupki.client import (BASE_URL, DEFAULT_DOCUMENT_TYPES, SERVICES, SUB
                                  EisClient, EisConfig, EisError)
 from arqg.zakupki.corpus import ChunkOptions, build_corpus, duplicate_report, write_report
 from arqg.zakupki.parse import parse_path
+from arqg.zakupki.tabular import (PROFILES, detect_profile, iter_docs,
+                                  parse_column_overrides)
 
 DEFAULT_RAW_DIR = "data/zakupki/raw"
 DEFAULT_OUT_DIR = "data/zakupki"
@@ -212,6 +215,75 @@ def _take(it, n: int):
         yield x
 
 
+# --------------------------------------------------------------------------- #
+# from-table
+# --------------------------------------------------------------------------- #
+def cmd_from_table(args: argparse.Namespace) -> int:
+    """Build the same corpus from a third-party dump instead of the live service."""
+    if not os.path.exists(args.input):
+        log.error("no such file: %s", args.input)
+        return 2
+
+    if args.profile == "auto":
+        profile = detect_profile(args.input)
+        if profile is None:
+            log.error("could not recognise %s — pass --profile with --column overrides "
+                      "(known profiles: %s)", args.input, ", ".join(sorted(PROFILES)))
+            return 2
+    else:
+        profile = PROFILES[args.profile]
+    if args.column:
+        profile = replace(profile, columns={**profile.columns,
+                                            **parse_column_overrides(args.column)})
+    if args.delimiter:
+        profile = replace(profile, delimiter=args.delimiter)
+    if not profile.columns:
+        log.error("profile %r has no columns; supply them with --column canonical=source",
+                  profile.name)
+        return 2
+    log.info("zakupki: %s — %s (licence: %s)", profile.name, profile.source or args.input,
+             profile.licence)
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    corpus_path = args.corpus or os.path.join(args.out_dir, f"zakupki_{profile.name}.jsonl")
+    report_path = os.path.join(args.out_dir, f"zakupki_{profile.name}_report.json")
+    docs_path = "" if args.no_docs else os.path.join(
+        args.out_dir, f"zakupki_{profile.name}_documents.jsonl")
+
+    # Record cards are short: merging sections would collapse a row into a single
+    # chunk, and a one-chunk document can never form a neighbour window.
+    opts = ChunkOptions(max_chars=args.max_chars, merge_below=args.merge_below,
+                        min_chars=args.min_chars,
+                        max_chunks_per_doc=args.max_chunks_per_doc)
+
+    stats = build_corpus(iter_docs(args.input, profile, limit=args.limit),
+                         corpus_path, opts=opts, docs_path=docs_path)
+    if not stats["n_chunks"]:
+        log.error("no chunks produced from %s", args.input)
+        return 1
+
+    records = list(read_jsonl(corpus_path))
+    report = {"source": profile.source or args.input, "profile": profile.name,
+              "licence": profile.licence, "corpus": corpus_path, **stats,
+              **duplicate_report(records, examples=args.examples)}
+    write_report(report, report_path)
+    _print_report(report)
+    _warn_thin_documents(records)
+    return 0
+
+
+def _warn_thin_documents(records: list[dict]) -> None:
+    """Windows need ≥2 chunks in a file; say so loudly if most rows give one."""
+    per_file: dict[str, int] = {}
+    for rec in records:
+        per_file[rec["file_name"]] = per_file.get(rec["file_name"], 0) + 1
+    singles = sum(1 for n in per_file.values() if n < 2)
+    if singles:
+        log.warning("zakupki: %d/%d documents have a single chunk — those cannot form "
+                    "neighbour windows; lower --merge-below or --min-chars",
+                    singles, len(per_file))
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     if not os.path.exists(args.corpus):
         log.error("no such corpus: %s", args.corpus)
@@ -227,8 +299,12 @@ def cmd_stats(args: argparse.Namespace) -> int:
 def _print_report(report: dict) -> None:
     ex = report.get("exact_duplicates", {})
     st = report.get("structural_duplicates", {})
+    parsed = report.get("n_documents_parsed")
+    files = report.get("n_files", 0)
     print("\n— выгрузка ЕИС —")
-    print(f"документов:            {report.get('n_documents', 0)}")
+    print(f"документов:            {files}"
+          + (f" (разобрано {parsed}, дублей отброшено {parsed - files})"
+             if parsed and parsed != files else ""))
     print(f"чанков:                {report.get('n_chunks', 0)}")
     if "mean_chunk_chars" in report:
         print(f"средний размер чанка:  {report['mean_chunk_chars']} симв.")
@@ -324,6 +400,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     b.add_argument("--max-chunks-per-doc", type=int, default=40)
     b.add_argument("--examples", type=int, default=5)
 
+    # ---- from-table ---- #
+    t = sub.add_parser("from-table", parents=[common],
+                       help="build the corpus from a third-party CSV/XLSX dump "
+                            "(no token, no Russian IP)")
+    t.add_argument("--input", required=True, help="path to the .csv / .xlsx dump")
+    t.add_argument("--profile", default="auto",
+                   choices=["auto", *sorted(PROFILES)],
+                   help="; ".join(f"{k} — {v.source or v.notes}" for k, v in PROFILES.items()))
+    t.add_argument("--column", action="append", default=[], metavar="CANON=COLUMN",
+                   help="map a canonical field onto a source column (repeatable)")
+    t.add_argument("--delimiter", default="", help="override the CSV delimiter")
+    t.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
+    t.add_argument("--corpus", default="")
+    t.add_argument("--no-docs", action="store_true")
+    t.add_argument("--limit", type=int, default=0, help="stop after N documents")
+    t.add_argument("--max-chars", type=int, default=1400)
+    t.add_argument("--merge-below", type=int, default=0,
+                   help="0 keeps each section its own chunk — record cards are short "
+                        "and a one-chunk document cannot form a window")
+    t.add_argument("--min-chars", type=int, default=40)
+    t.add_argument("--max-chunks-per-doc", type=int, default=40)
+    t.add_argument("--examples", type=int, default=5)
+
     # ---- stats ---- #
     s = sub.add_parser("stats", parents=[common], help="near-duplicate report over an existing corpus")
     s.add_argument("--corpus", default=os.path.join(DEFAULT_OUT_DIR, "zakupki_index.jsonl"))
@@ -347,7 +446,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     setup_logging(args.log_level)
-    return {"fetch": cmd_fetch, "build": cmd_build,
+    return {"fetch": cmd_fetch, "build": cmd_build, "from-table": cmd_from_table,
             "stats": cmd_stats, "xsd": cmd_xsd}[args.command](args)
 
 
