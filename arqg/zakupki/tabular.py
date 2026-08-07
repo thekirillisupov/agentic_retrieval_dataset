@@ -89,6 +89,11 @@ class TableProfile:
     #: number out of it.
     doc_id_from: str = ""
     doc_id_regex: str = r"(\d{19})"
+    #: Where the dump can be downloaded from without credentials, and which file
+    #: inside the archive carries the records. Kept next to the column map so the
+    #: downloader and the parser cannot drift apart.
+    download_url: str = ""
+    member: str = ""
 
 
 PROFILES: dict[str, TableProfile] = {
@@ -97,6 +102,9 @@ PROFILES: dict[str, TableProfile] = {
         name="kaggle_biggest",
         source="kaggle.com/datasets/dadalyndell/russian-biggest-government-procurement-contracts",
         licence="ODC PDDL (public domain)",
+        download_url=("https://www.kaggle.com/api/v1/datasets/download/dadalyndell/"
+                      "russian-biggest-government-procurement-contracts"),
+        member="tender_data.csv",
         delimiter=",",
         notes="tenders over 500 mln RUB, 2014-2023, ~4.5k rows, winner included",
         columns={
@@ -116,6 +124,8 @@ PROFILES: dict[str, TableProfile] = {
         name="zakupkihack",
         source="kaggle.com/datasets/mrmorj/zakupkihack-recsys",
         licence="not declared by the publisher — check before redistribution",
+        download_url="https://www.kaggle.com/api/v1/datasets/download/mrmorj/zakupkihack-recsys",
+        member="train_data.csv",
         delimiter=";",
         notes="~0.5M+ lots, 2019-2020, 44/223-ФЗ, ОКПД2 + item descriptions, "
               "procurement numbers anonymised (pn_lot_*)",
@@ -131,6 +141,10 @@ PROFILES: dict[str, TableProfile] = {
         name="hf_medicines",
         source="huggingface.co/datasets/zavzyatiy/medicines_from_zakupki_gov_ru",
         licence="Apache-2.0",
+        download_url=("https://huggingface.co/datasets/zavzyatiy/"
+                      "medicines_from_zakupki_gov_ru/resolve/main/zakupki/"
+                      "tenders_farmcom_info.xlsx"),
+        member="tenders_farmcom_info.xlsx",
         notes="drug procurement only (zakupki/tenders_farmcom_info.xlsx); the "
               "Num_trade column is a float and has lost digits — the real number "
               "is recovered from the trade URL",

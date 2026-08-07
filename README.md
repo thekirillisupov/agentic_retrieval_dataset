@@ -209,16 +209,21 @@ these three were checked by hand and have a profile in `arqg/zakupki/tabular.py`
 | `zakupkihack` | `kaggle.com/datasets/mrmorj/zakupkihack-recsys` | 153 MB | **not declared** — check before redistributing | ~0.5M+ lots, 2019-2020, 44/223-ФЗ, ОКПД2 + item descriptions; procurement numbers anonymised |
 | `hf_medicines` | `huggingface.co/datasets/zavzyatiy/medicines_from_zakupki_gov_ru` | 63 MB | **Apache-2.0** | drug procurement only, 2015-2025, НМЦК + contract price |
 
-Kaggle serves these over its public API without a key:
+All three download without credentials — Kaggle over its public API, the HF file
+over the resolve endpoint — so the whole corpus is reproducible from nothing:
 
 ```bash
-curl -L -o dump.zip \
-  https://www.kaggle.com/api/v1/datasets/download/dadalyndell/russian-biggest-government-procurement-contracts
-unzip dump.zip
+# fetches and unpacks all three (~220 MB), skipping what is already there
+python scripts/build_zakupki_corpus.py dumps --out-dir data/zakupki/dumps
 
+# it prints the exact merge command for what it fetched; or build one dump alone:
 python scripts/build_zakupki_corpus.py from-table \
-    --input tender_data.csv --out-dir data/zakupki
+    --input data/zakupki/dumps/tender_data.csv --out-dir data/zakupki
 ```
+
+Download URLs live in the profiles next to the column maps, so the downloader and
+the parser cannot drift apart. **Nothing built is committed to the repo** — the
+corpus is 2.2 GB and `data/` is gitignored; rebuild it with the commands above.
 
 The profile is detected from the header; anything else goes through
 `--profile generic` with explicit `--column canonical=source` pairs. Unmapped
