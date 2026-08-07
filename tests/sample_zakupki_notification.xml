@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Trimmed epNotificationEF2020 (извещение о проведении электронного аукциона),
+  shaped like what the ЕИС data services return: namespaced export wrapper, the
+  document element under it, a signature block that must be discarded. Field
+  values are invented; the structure and tag names follow the 44-ФЗ schema.
+-->
+<ns2:export xmlns:ns2="http://zakupki.gov.ru/oos/export/1"
+            xmlns:ns4="http://zakupki.gov.ru/oos/base/1">
+  <ns2:epNotificationEF2020 schemeVersion="12.2">
+    <ns2:id>31948210371</ns2:id>
+    <ns2:purchaseNumber>0173200001425000417</ns2:purchaseNumber>
+    <ns2:docNumber>ИЗВ-2025-000417</ns2:docNumber>
+    <ns2:publishDTInEIS>2025-06-11T09:14:00+03:00</ns2:publishDTInEIS>
+    <ns2:href>https://zakupki.gov.ru/epz/order/notice/ea20/view/common-info.html?regNumber=0173200001425000417</ns2:href>
+    <ns2:purchaseObjectInfo>Поставка бумаги офисной и расходных материалов для нужд учреждения</ns2:purchaseObjectInfo>
+    <ns2:commonInfo>
+      <ns2:placingWay>
+        <ns2:code>EA20</ns2:code>
+        <ns2:name>Электронный аукцион</ns2:name>
+      </ns2:placingWay>
+      <ns2:ETP>
+        <ns2:code>ETP_RTS</ns2:code>
+        <ns2:name>РТС-тендер</ns2:name>
+        <ns2:url>https://www.rts-tender.ru</ns2:url>
+      </ns2:ETP>
+      <ns2:IKZ>252720300123472030100100120011712244</ns2:IKZ>
+    </ns2:commonInfo>
+    <ns2:purchaseResponsibleInfo>
+      <ns2:responsibleOrg>
+        <ns2:regNum>03731000123</ns2:regNum>
+        <ns2:fullName>Государственное бюджетное учреждение здравоохранения «Городская поликлиника № 14»</ns2:fullName>
+        <ns2:shortName>ГБУЗ «ГП № 14»</ns2:shortName>
+        <ns2:INN>7203001234</ns2:INN>
+        <ns2:KPP>720301001</ns2:KPP>
+        <ns2:postAddress>625000, Тюменская обл., г. Тюмень, ул. Республики, д. 142</ns2:postAddress>
+        <ns2:factAddress>625000, Тюменская обл., г. Тюмень, ул. Республики, д. 142</ns2:factAddress>
+      </ns2:responsibleOrg>
+      <ns2:responsibleRole>CU</ns2:responsibleRole>
+      <ns2:contactPerson>
+        <ns2:lastName>Верещагина</ns2:lastName>
+        <ns2:firstName>Марина</ns2:firstName>
+        <ns2:middleName>Игоревна</ns2:middleName>
+        <ns2:contactEMail>zakupki-gp14@example.ru</ns2:contactEMail>
+        <ns2:contactPhone>7-3452-451207</ns2:contactPhone>
+      </ns2:contactPerson>
+    </ns2:purchaseResponsibleInfo>
+    <ns2:notificationInfo>
+      <ns2:procedureInfo>
+        <ns2:collectingInfo>
+          <ns2:startDT>2025-06-11T09:00:00+03:00</ns2:startDT>
+          <ns2:endDT>2025-06-19T08:00:00+03:00</ns2:endDT>
+          <ns2:place>Электронная площадка РТС-тендер</ns2:place>
+        </ns2:collectingInfo>
+        <ns2:biddingDate>2025-06-20</ns2:biddingDate>
+        <ns2:summarizingDate>2025-06-23</ns2:summarizingDate>
+      </ns2:procedureInfo>
+    </ns2:notificationInfo>
+    <ns2:lot>
+      <ns2:maxPriceInfo>
+        <ns2:maxPrice>1487300.50</ns2:maxPrice>
+        <ns2:currency>
+          <ns2:code>RUB</ns2:code>
+          <ns2:name>Российский рубль</ns2:name>
+        </ns2:currency>
+      </ns2:maxPriceInfo>
+      <ns2:financeSource>Средства бюджета субъекта Российской Федерации</ns2:financeSource>
+      <ns2:purchaseObjectsInfo>
+        <ns2:notDrugPurchaseObjectsInfo>
+          <ns2:purchaseObject>
+            <ns2:KTRU>
+              <ns2:code>17.12.14.119-00000006</ns2:code>
+              <ns2:name>Бумага для офисной техники</ns2:name>
+            </ns2:KTRU>
+            <ns2:name>Бумага офисная А4, плотность 80 г/кв.м, белизна не менее 146 % CIE</ns2:name>
+            <ns2:OKEI>
+              <ns2:code>778</ns2:code>
+              <ns2:name>Упаковка</ns2:name>
+            </ns2:OKEI>
+            <ns2:quantity>1200</ns2:quantity>
+            <ns2:price>310.00</ns2:price>
+            <ns2:sum>372000.00</ns2:sum>
+          </ns2:purchaseObject>
+          <ns2:purchaseObject>
+            <ns2:KTRU>
+              <ns2:code>20.59.12.190-00000002</ns2:code>
+              <ns2:name>Картридж для лазерного принтера</ns2:name>
+            </ns2:KTRU>
+            <ns2:name>Картридж лазерный, ресурс не менее 3000 страниц, оригинальный</ns2:name>
+            <ns2:OKEI>
+              <ns2:code>796</ns2:code>
+              <ns2:name>Штука</ns2:name>
+            </ns2:OKEI>
+            <ns2:quantity>310</ns2:quantity>
+            <ns2:price>3597.75</ns2:price>
+            <ns2:sum>1115302.50</ns2:sum>
+          </ns2:purchaseObject>
+        </ns2:notDrugPurchaseObjectsInfo>
+      </ns2:purchaseObjectsInfo>
+      <ns2:deliveryPlacesInfo>
+        <ns2:deliveryPlace>625000, Тюменская обл., г. Тюмень, ул. Республики, д. 142, склад учреждения</ns2:deliveryPlace>
+        <ns2:deliveryTerm>В течение 20 календарных дней с даты заключения контракта</ns2:deliveryTerm>
+      </ns2:deliveryPlacesInfo>
+      <ns2:customerRequirementsInfo>
+        <ns2:customerRequirement>
+          <ns2:applicationGuarantee>
+            <ns2:part>1.0</ns2:part>
+            <ns2:amount>14873.01</ns2:amount>
+          </ns2:applicationGuarantee>
+          <ns2:contractGuarantee>
+            <ns2:part>5.0</ns2:part>
+            <ns2:amount>74365.03</ns2:amount>
+          </ns2:contractGuarantee>
+        </ns2:customerRequirement>
+      </ns2:customerRequirementsInfo>
+    </ns2:lot>
+    <ns2:contractConditionsInfo>
+      <ns2:contractExecutionPlan>Единовременная поставка товара в полном объёме</ns2:contractExecutionPlan>
+      <ns2:executionPeriod>
+        <ns2:startDate>2025-07-01</ns2:startDate>
+        <ns2:endDate>2025-09-30</ns2:endDate>
+      </ns2:executionPeriod>
+      <ns2:paymentTermsInfo>Оплата в течение 7 рабочих дней с даты подписания документа о приёмке</ns2:paymentTermsInfo>
+    </ns2:contractConditionsInfo>
+    <ns2:requirementsInfo>
+      <ns2:requirement>
+        <ns2:shortDescription>Единые требования к участникам закупки</ns2:shortDescription>
+        <ns2:content>Соответствие требованиям, установленным в соответствии с законодательством Российской Федерации к лицам, осуществляющим поставку товара, являющегося объектом закупки</ns2:content>
+      </ns2:requirement>
+      <ns2:requirement>
+        <ns2:shortDescription>Отсутствие в реестре недобросовестных поставщиков</ns2:shortDescription>
+        <ns2:content>Отсутствие сведений об участнике закупки в реестре недобросовестных поставщиков (подрядчиков, исполнителей)</ns2:content>
+      </ns2:requirement>
+    </ns2:requirementsInfo>
+    <ns2:attachments>
+      <ns2:attachment>
+        <ns2:fileName>Описание_объекта_закупки.docx</ns2:fileName>
+        <ns2:fileSize>48213</ns2:fileSize>
+        <ns2:docDescription>Описание объекта закупки</ns2:docDescription>
+      </ns2:attachment>
+    </ns2:attachments>
+    <ns4:signature>MIIJ0AYJKoZIhvcNAQcCoIIJwTCCCb0CAQExDjAMBggqhQMHAQECAgUAMAsGCSqG</ns4:signature>
+  </ns2:epNotificationEF2020>
+</ns2:export>

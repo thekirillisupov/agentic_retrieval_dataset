@@ -8,6 +8,10 @@ PyYAML>=6.0
 # Optional: native Anthropic backend (llm.backend: anthropic)
 # anthropic>=0.39.0
 
+# Optional: reading .xlsx third-party ЕИС dumps
+# (scripts/build_zakupki_corpus.py from-table --input *.xlsx). CSV needs nothing.
+# openpyxl>=3.1.0
+
 # Optional: hard-negative mining (negatives.enabled: true)
 # sentence-transformers>=3.0.0
 
