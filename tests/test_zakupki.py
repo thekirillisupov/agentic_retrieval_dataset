@@ -602,3 +602,14 @@ def test_backward_fold_never_leaves_a_single_chunk():
         Section("Вторая", ["Тоже короткая."]),
     ])
     assert len(chunk_document(doc, ChunkOptions(merge_below=5000, min_chars=5))) == 2
+
+
+def test_every_downloadable_profile_names_the_file_it_extracts():
+    """`dumps` and the parser must not drift: the member is what merge reads."""
+    downloadable = {n: p for n, p in PROFILES.items() if p.download_url}
+    assert set(downloadable) == {"kaggle_biggest", "zakupkihack", "hf_medicines"}
+    for name, profile in downloadable.items():
+        assert profile.member, name
+        assert profile.member.endswith((".csv", ".xlsx")), name
+        assert profile.download_url.startswith("https://"), name
+        assert profile.licence, name

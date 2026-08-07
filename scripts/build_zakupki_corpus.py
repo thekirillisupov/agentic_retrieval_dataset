@@ -274,6 +274,82 @@ def cmd_from_table(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# dumps
+# --------------------------------------------------------------------------- #
+def cmd_dumps(args: argparse.Namespace) -> int:
+    """Download the published dumps, so `merge` is reproducible from nothing.
+
+    All three are served without credentials — Kaggle over its public API, the
+    HF file over the resolve endpoint. Existing files are left alone, so a failed
+    run resumes rather than re-fetching 150 MB.
+    """
+    import httpx
+    import zipfile
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    wanted = args.profiles or [n for n, p in PROFILES.items() if p.download_url]
+    ready: list[tuple[str, str]] = []
+    failed: list[str] = []
+
+    for name in wanted:
+        profile = PROFILES.get(name)
+        if profile is None or not profile.download_url:
+            log.error("no download URL for profile %r", name)
+            failed.append(name)
+            continue
+        target = os.path.join(args.out_dir, profile.member)
+        if os.path.exists(target) and not args.force:
+            log.info("zakupki: %s already present (%s)", profile.member, name)
+            ready.append((name, target))
+            continue
+
+        archive = os.path.join(args.out_dir, f"{name}.download")
+        log.info("zakupki: fetching %s (%s, licence: %s)",
+                 name, profile.source, profile.licence)
+        try:
+            with httpx.Client(timeout=600.0, follow_redirects=True) as http:
+                with http.stream("GET", profile.download_url) as r:
+                    r.raise_for_status()
+                    with open(archive, "wb") as f:
+                        for block in r.iter_bytes(1 << 20):
+                            f.write(block)
+        except httpx.HTTPError as e:
+            log.error("zakupki: %s failed: %s", name, e)
+            failed.append(name)
+            continue
+
+        if zipfile.is_zipfile(archive):
+            with zipfile.ZipFile(archive) as zf:
+                if profile.member not in zf.namelist():
+                    log.error("zakupki: %s not found in the %s archive (has %s)",
+                              profile.member, name, ", ".join(zf.namelist()[:6]))
+                    failed.append(name)
+                    continue
+                zf.extract(profile.member, args.out_dir)
+            os.remove(archive)
+        else:
+            os.replace(archive, target)
+        log.info("zakupki: %s -> %s (%.1f MB)", name, target,
+                 os.path.getsize(target) / 1e6)
+        ready.append((name, target))
+
+    if not ready:
+        return 1
+    print("\n— дампы готовы —")
+    for name, path in ready:
+        print(f"  {name:16} {path}  [{PROFILES[name].licence}]")
+    # No `:profile` suffix: every downloaded dump is recognised from its header.
+    inputs = " \\\n    ".join(f"--input {path}" for _, path in ready)
+    print("\nСобрать один корпус:\n")
+    print(f"  python scripts/build_zakupki_corpus.py merge \\\n    {inputs} \\\n"
+          f"    --name zakupki_all --out-dir {DEFAULT_OUT_DIR}\n")
+    if failed:
+        log.warning("zakupki: %d dump(s) could not be fetched: %s",
+                    len(failed), ", ".join(failed))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # merge
 # --------------------------------------------------------------------------- #
 def _resolve_source(spec: str, overrides: list[str], delimiter: str) -> SourceSpec:
@@ -488,6 +564,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     t.add_argument("--max-chunks-per-doc", type=int, default=40)
     t.add_argument("--examples", type=int, default=5)
 
+    # ---- dumps ---- #
+    d = sub.add_parser("dumps", parents=[common],
+                       help="download the published dumps (no credentials needed)")
+    d.add_argument("--out-dir", default=os.path.join(DEFAULT_OUT_DIR, "dumps"))
+    d.add_argument("--profiles", type=csv_list, default=[],
+                   help="comma-separated subset (default: every downloadable profile)")
+    d.add_argument("--force", action="store_true", help="re-download files already present")
+
     # ---- merge ---- #
     m = sub.add_parser("merge", parents=[common],
                        help="fold several dumps into ONE corpus + metadata sidecar")
@@ -534,7 +618,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     setup_logging(args.log_level)
     return {"fetch": cmd_fetch, "build": cmd_build, "from-table": cmd_from_table,
-            "merge": cmd_merge, "stats": cmd_stats, "xsd": cmd_xsd}[args.command](args)
+            "dumps": cmd_dumps, "merge": cmd_merge,
+            "stats": cmd_stats, "xsd": cmd_xsd}[args.command](args)
 
 
 if __name__ == "__main__":
