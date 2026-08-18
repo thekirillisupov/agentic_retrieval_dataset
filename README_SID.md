@@ -57,15 +57,29 @@ individually: `python run_sid.py gates --config …`.
 ### Why the order is what it is
 
 - **Cheap gates before expensive ones.** `G_BROAD` and `G_REACH` need no LLM
-  call at all — `G_REACH` probes with the fact's own verbatim span and the
-  normalised paraphrase that S3 already produced. So they run on the full
-  1-of-N batch, and only the surviving winner pays for a critic.
+  call at all — `G_REACH` probes with the normalised paraphrase S3 already
+  produced. So they run on the full 1-of-N batch, and only the surviving winner
+  pays for a critic.
 - **Minimisation before injection.** Minimality is a property of the labels;
   injection does not change it, so `G_MIN`/`G_REP` never re-run.
 - **Isolation after injection, never before.** A distractor built for task A
   lives in the shared index and is a candidate in the results for B. If it
   happens to be a valid alternative path for B, that is exactly the labelling
   hole isolation exists to close, and a check on v0 cannot see it.
+
+**What isolation drops, and what it merely measures.** Two tasks with the *same*
+gold set are one task labelled twice: one survives, chosen by `task_id` so the
+result does not depend on the order the pool arrives in. Everything else in a
+result list that is not this task's gold — another task's gold included — is a
+*candidate* shortcut and goes to the judge; only a verdict that it actually
+yields this answer drops the task. Rejecting on the mere presence of another
+task's gold is a different test: it fires on co-retrieval, which is the normal
+state of affairs once S1 mines within a folder — the better the scoping, the
+more neighbouring tasks retrieve each other — and it fires symmetrically, so
+both members of a pair die instead of one. It also could never see the case it
+was named for, since a gold chunk shared with another task is *this* task's gold
+too and was filtered out before the check ran. `isolation_report.json` now
+carries `gold_overlap`, so how much the pool shares gold stays measured.
 
 ---
 
@@ -227,13 +241,27 @@ section stays reachable for `G_REACH`.
 | Gate | Check | Rejects |
 |---|---|---|
 | `G_BROAD` | the whole question as ONE query must not return the whole gold set | trivial tasks |
-| `G_REACH` | every gold chunk reachable by at least one probe | tasks above the environment's ceiling → `environment_ceiling_pool.jsonl` |
+| `G_REACH` | every gold chunk reachable by its fact's paraphrase | tasks above the environment's ceiling → `environment_ceiling_pool.jsonl` |
 | `G_SOLVE` | answer uniquely derivable from the gold facts; question leaks neither the answer nor the intermediate entities | unsolvable, distorted, self-answering |
 | `G_MIN` | leave-one-**fact**-out, greedy, re-checking every survivor after each removal | bloated gold sets |
 | `G_REP` | every chunk that states a surviving fact joins that fact's group | nothing — it builds labels |
 
 `G_BROAD` and `G_REACH` are the two ends of one interval: not trivial, not
 unreachable.
+
+**G_REACH probes with the paraphrase, not with the gold's own wording.** A
+fact's `verbatim_span` is by construction an exact substring of the chunk it has
+to retrieve, so probing with it asks whether the index can find a document from
+its own text — nearly always yes, whatever the environment's real ceiling is.
+Probing with both and accepting either (the original rule) therefore made the
+paraphrase — the only probe an agent could actually issue — unable to change any
+outcome, and quietly turned the gate into a no-op: `environment_ceiling_pool`
+stays empty, the "low `G_REACH` pass-rate ⇒ the environment's ceiling" reading of
+`gates.funnel` cannot fire, and §7.1's reach-conditioned density median collapses
+onto the unconditioned one it exists to be compared against. `gates.reach_probe`
+selects `paraphrase` (default), `verbatim` or `both`; the default also halves the
+gate's embedding bill, which on a rate-limited embedder is what the cheap gates
+actually cost.
 
 **Minimisation is per fact, not per chunk.** Redundancy lives between the
 chunks of one fact, not between facts. If a fact is covered by `{c₁, c₂, c₃}`,
@@ -266,7 +294,7 @@ the pool when there is a trainer to split it for.
 | Field | What it decides |
 |---|---|
 | `gold.share_singleton_groups` | **< 0.95 ⇒ NDCG must be computed over fact groups**, with `B_i` counted in groups. At chunk granularity the metric penalises correct behaviour. The field `gold.ndcg_granularity` states the verdict. |
-| `complexity.fused_gap_share` | the datamix balancing axis; target is 30/40/30 low/mid/high |
+| `complexity.fused_gap_share` | the datamix balancing axis; the target is `export.target_fused_gap_share` (30/40/30 low/mid/high), and S4's 1-of-N selection already steers towards it, so a residual skew here is the corpus, not the selector |
 | `complexity.lexicon_arm_size` | tasks with `lex_gap` high **and** `fused_gap` high — the only population where a `lexicon` field in `<state>` can show an effect. If it is empty, that hypothesis is untestable on this corpus, and `dense_gap` says why. |
 | `distractors.share_L3` | > 0.10 means full generation is being used as a crutch |
 | `distractors.share_tasks_with_empty_L2_band` | > 0.25 means the corpus is too sparse for this class of task — revisit subgraph selection rather than flooding the index with synthetic text |
@@ -323,6 +351,21 @@ cascade level and distractor type live in `injection_ledger.jsonl`, which is
 ours. `corpus_injected.jsonl` is the agent-visible delta and carries none of it.
 A leaked marker teaches "synthetic → ignore", which is a shortcut, not a skill.
 
+**An injected chunk is embedded exactly like a v0 one.** With `embed_with_title`
+on, every corpus chunk enters the dense index as `title\ntext`; a distractor
+inherits its donor's title and is embedded the same way, both for the §7.5
+neighbourhood check and for the vector written to the index. Embedded as bare
+text it would sit somewhere other than where a rebuild of v1 from
+`corpus_injected.jsonl` puts it — so "does it land in the gold neighbourhood?"
+would be answered about a vector nothing ever retrieves against.
+
+S6 also **saves the index it mutated** under `index/v1/`, together with the
+injected delta, every `50` tasks and at the end. The dense cache is keyed on the
+corpus checksum, which every injection changes: without that save, S7 — and any
+resumed `distract` — re-embeds the entire corpus for vectors the process is
+already holding, which on a 60k-chunk corpus behind a rate-limited embedder is
+hours of API calls per resume.
+
 ---
 
 ## Where this departs from the plan, and why
@@ -337,6 +380,7 @@ A leaked marker teaches "synthetic → ignore", which is a shortcut, not a skill
 | chunk text is the only prompt input | the section breadcrumb is passed to S3 as context, never as a fact source | a bare markdown table row does not say which product it belongs to, and the composer fills that gap by inventing. `verbatim_span` is still matched against the chunk alone. |
 | incremental composition, base → +hop → +constraint, `max_compose_iters = 4` | one-shot composition + repair against the critic's objection, `max_compose_iters = 2` | same corrective signal, a fraction of the calls |
 | `N = 6` candidates per cell | `N = 3` (configurable) | cost; the mechanism is what matters at v1 |
+| 1-of-N keeps the hardest candidate | keeps the one whose `fused_gap` bin is furthest below `export.target_fused_gap_share` | the batch's members are different subgraphs — N different tasks, not N phrasings of one — so "keep the hardest" is a difficulty filter over the whole pool, and it starves the `low` bin the export grades against. `taxonomy.batch_selection: hardest` restores the old rule |
 | LLM proposes submechanics per corpus | fixed grounded list per mechanic | they are local diversity, not cells; a corpus that cannot support a cell fails its gates and shows up in `gate_stats` |
 | dual-critic on the pilot | implemented, off by default (`gates.dual_critic`) | it is a one-off purchase of information, per the plan itself |
 | teacher trajectories, SFT filtering by teacher recall | **not implemented** | needs the RL harness — four tools, the `<state>` format, per-episode doc_id remapping. `export.py` produces exactly the pool those would be collected on. |

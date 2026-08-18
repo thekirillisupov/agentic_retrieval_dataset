@@ -39,7 +39,8 @@ from ..llm import BaseLLM
 from ..utils import append_jsonl, load_done_keys, log, read_jsonl
 from .config import SidConfig
 from .density import DensityModel
-from .env import Env
+from .env import Env, dense_signature, passage_text
+from .gates import reach_probe_fields
 from .prompts import (DISTRACTOR_CHECK_SYS, GENERATE_SYS, PERTURB_SYS,
                       TRANSPLANT_SYS, distractor_check_user,
                       generate_distractor_user, perturb_user, transplant_user)
@@ -59,6 +60,10 @@ class DistractorCandidate:
     source_chunk_id: str
     perturbed_attribute: str = ""
     sim_to_gold: float = 0.0
+    # The title the injected chunk will carry (its donor's). Kept on the
+    # candidate rather than looked up at injection time because it is part of
+    # what gets embedded — see `_passage(env, candidate)`.
+    title: str = ""
 
 
 @dataclass
@@ -100,6 +105,19 @@ def _pools(env: Env, gold: list[str], model: DensityModel,
     return band_ids, far[: cfg.distractors.l1_pool]
 
 
+def _donor_title(env: Env, chunk_id: str) -> str:
+    c = env.corpus.get(chunk_id)
+    return c.title if c else ""
+
+
+def _passage(env: Env, c: DistractorCandidate) -> str:
+    """The candidate as the index will hold it — title included when the rest
+    of the corpus is embedded that way. Both the §7.5 neighbourhood check and
+    the vector actually written to the index go through this, so what was
+    verified is what is retrieved."""
+    return passage_text(c.title, c.text, env.cfg.embed.embed_with_title)
+
+
 # --------------------------------------------------------------------------- #
 # Generation
 # --------------------------------------------------------------------------- #
@@ -120,7 +138,7 @@ async def _gen_l2(llm: BaseLLM, env: Env, rec: dict, source_id: str) -> Distract
     return DistractorCandidate(
         text=text, level="L2_perturbed",
         dtype=str(obj.get("distractor_type", "near_duplicate")),
-        source_chunk_id=source_id,
+        source_chunk_id=source_id, title=_donor_title(env, source_id),
         perturbed_attribute=str(obj.get("perturbed_attribute", "")))
 
 
@@ -139,7 +157,7 @@ async def _gen_l1(llm: BaseLLM, env: Env, rec: dict, source_id: str,
     return DistractorCandidate(
         text=text, level="L1_transplant",
         dtype=str(obj.get("distractor_type", "topical_lure")),
-        source_chunk_id=source_id)
+        source_chunk_id=source_id, title=_donor_title(env, source_id))
 
 
 async def _gen_l3(llm: BaseLLM, env: Env, rec: dict, template_id: str) -> DistractorCandidate | None:
@@ -156,7 +174,7 @@ async def _gen_l3(llm: BaseLLM, env: Env, rec: dict, template_id: str) -> Distra
     return DistractorCandidate(
         text=text, level="L3_generated",
         dtype=str(obj.get("distractor_type", "topical_lure")),
-        source_chunk_id=template_id)
+        source_chunk_id=template_id, title=_donor_title(env, template_id))
 
 
 # --------------------------------------------------------------------------- #
@@ -220,7 +238,7 @@ async def verify_candidates(cfg: SidConfig, judge: BaseLLM, env: Env, rec: dict,
     # p.5 — must actually land in the gold neighbourhood, or the whole injection
     # budget is spent without moving density. One score against embeddings we
     # already have; must run *before* anything is written to the index.
-    vecs = await env.embedder.embed([c.text for c in stage1], kind="passage")
+    vecs = await env.embedder.embed([_passage(env, c) for c in stage1], kind="passage")
     gold_vecs = env.dense.vecs(rec["gold_chunk_ids"])
     stage2: list[DistractorCandidate] = []
     for c, v in zip(stage1, vecs):
@@ -338,7 +356,7 @@ def inject(cfg: SidConfig, env: Env, rec: dict, inj: TaskInjection,
             text=c.text, task_id=rec["task_id"], level=c.level, dtype=c.dtype,
             source_chunk_id=c.source_chunk_id,
             document_id=donor.document_id if donor else "",
-            title=donor.title if donor else "",
+            title=c.title,
             perturbed_attribute=c.perturbed_attribute,
             sim_to_gold=round(c.sim_to_gold, 4), version=version)
         if chunk is None:
@@ -368,6 +386,27 @@ def inject(cfg: SidConfig, env: Env, rec: dict, inj: TaskInjection,
     }
 
 
+#: how many tasks may be injected before the v1 delta is written out again
+_FLUSH_EVERY = 50
+
+
+def save_index(cfg: SidConfig, env: Env) -> None:
+    """Persist the injected delta *and the embeddings that go with it*.
+
+    The dense cache is keyed on the corpus checksum (see `env.dense_signature`),
+    which every injection changes. Without saving the mutated index under v1,
+    every later stage that asks for v1 — S7, and any resumed `distract` —
+    misses the cache and re-embeds the entire corpus, for vectors this process
+    is already holding. On a 60k-chunk corpus behind a rate-limited embedder
+    that is hours of API calls, paid again on every resume, which is precisely
+    the cost the stage-level resume exists to avoid.
+    """
+    env.corpus.version = "v1"
+    env.corpus.export_public(cfg.paths.injected_corpus, only_injected=True)
+    env.corpus.save_ledger(cfg.paths.injection_ledger)
+    env.dense.save(cfg.paths.dense_dir("v1"), dense_signature(cfg, env.corpus, "v1"))
+
+
 async def run_distractors(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM,
                           records: list[dict], model: DensityModel) -> list[dict]:
     if not cfg.distractors.enabled:
@@ -381,10 +420,11 @@ async def run_distractors(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM
     log.info("S6: %d tasks to densify (%d done)", len(todo), len(done))
 
     # sequential per task: each injection changes the index the next task sees
-    for rec in todo:
+    for i, rec in enumerate(todo, start=1):
         target = int(rec.get("_n_distractors_target", 0))
         inj = await build_for_task(cfg, gen, judge, env, rec, model, rng)
-        vecs = (await env.embedder.embed([c.text for c in inj.accepted], kind="passage")
+        vecs = (await env.embedder.embed([_passage(env, c) for c in inj.accepted],
+                                         kind="passage")
                 if inj.accepted else np.zeros((0, 1), dtype="float32"))
         summary = inject(cfg, env, rec, inj, vecs)
         env.corpus.version = "v1"
@@ -399,10 +439,15 @@ async def run_distractors(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM
         }
         append_jsonl(cfg.paths.injected_tasks, rec)
         out.append(rec)
+        # `injected.jsonl` is appended per task, but the injected chunks live in
+        # memory until they are dumped. A crash between the two marks the task
+        # done while its distractors do not exist — and resume skips it. Flush
+        # periodically so that window is bounded rather than the whole stage.
+        if i % _FLUSH_EVERY == 0:
+            save_index(cfg, env)
 
     all_out = list(read_jsonl(cfg.paths.injected_tasks))
-    env.corpus.export_public(cfg.paths.injected_corpus, only_injected=True)
-    env.corpus.save_ledger(cfg.paths.injection_ledger)
+    save_index(cfg, env)
     env.corpus.write_manifest(cfg.paths.manifest, cfg.corpus_name,
                               extra={"taxonomy_version": cfg.taxonomy_version})
     n_inj = sum(r["distractors"]["n_injected"] for r in all_out)
@@ -439,7 +484,10 @@ async def reach_recheck(cfg: SidConfig, env: Env, records: list[dict]) -> dict[s
     for rec in sample:
         queries, owners = [], []
         for f in rec["facts"]:
-            for q in (f.get("verbatim_span", ""), f.get("fact_normalized", "")):
+            # the same probe G_REACH used, or the before/after numbers are not
+            # measuring the same thing
+            for field in reach_probe_fields(cfg):
+                q = f.get(field, "")
                 if q:
                     queries.append(q)
                     owners.append(f["chunk_id"])

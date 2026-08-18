@@ -19,8 +19,36 @@ from .lexical import BM25Index
 from .retrieval import HybridSearcher
 
 
-def _passage_text(c, with_title: bool) -> str:
-    return f"{c.title}\n{c.raw_text}" if (with_title and c.title) else c.raw_text
+def passage_text(title: str, raw_text: str, with_title: bool) -> str:
+    """The exact string a passage is embedded as.
+
+    Public because injection has to reproduce it. A distractor is a chunk of
+    this index like any other: embedding it as bare text while every v0 chunk
+    carries its title puts it in a different place of the space than the one
+    it will occupy once the v1 index is rebuilt from disk — so the
+    neighbourhood check of §7.5 would be measured on a vector nobody ever
+    retrieves against.
+    """
+    return f"{title}\n{raw_text}" if (with_title and title) else raw_text
+
+
+def chunk_passage_text(c, with_title: bool) -> str:
+    return passage_text(c.title, c.raw_text, with_title)
+
+
+def dense_signature(cfg: SidConfig, corpus: SidCorpus, version: str) -> dict:
+    """What the dense cache is keyed on. Any injection changes the checksum, so
+    a version whose index is not saved after injection can never be resumed
+    into — it re-embeds the whole corpus instead (see `distractors.save_index`).
+    """
+    return {
+        "model": cfg.embed.model,
+        "backend": cfg.embed.backend,
+        "n": len(corpus),
+        "version": version,
+        "corpus": os.path.abspath(cfg.paths.corpus),
+        "checksum": corpus.checksum(),
+    }
 
 
 def build_bm25(corpus: SidCorpus) -> BM25Index:
@@ -52,18 +80,11 @@ async def build_dense_for(cfg: SidConfig, corpus: SidCorpus, version: str,
     what makes the mining stage and the gates share one embedding bill.
     """
     chunks = corpus.all_chunks()
-    signature = {
-        "model": cfg.embed.model,
-        "backend": cfg.embed.backend,
-        "n": len(chunks),
-        "version": version,
-        "corpus": os.path.abspath(cfg.paths.corpus),
-        "checksum": corpus.checksum(),
-    }
     return await build_dense(
         embedder, [c.id for c in chunks],
-        [_passage_text(c, cfg.embed.embed_with_title) for c in chunks],
-        cfg.paths.dense_dir(version), signature, rebuild=cfg.embed.rebuild_index)
+        [chunk_passage_text(c, cfg.embed.embed_with_title) for c in chunks],
+        cfg.paths.dense_dir(version), dense_signature(cfg, corpus, version),
+        rebuild=cfg.embed.rebuild_index)
 
 
 async def build_env(cfg: SidConfig, *, version: str = "v0",

@@ -94,6 +94,10 @@ taxonomy:
   negation_rate: 0.20              # plan wants >= 15% of tasks with negation
   candidates_per_cell: 3           # 1-of-N local diversity (plan says 6)
   keep_per_batch: 1
+  # How the batch's survivor is chosen. `hardest` keeps the largest fused_gap,
+  # which starves the "low" bin the export grades the pool against; `datamix`
+  # keeps the member whose bin is furthest below export.target_fused_gap_share.
+  batch_selection: datamix          # datamix | hardest
 
 # --- S3 --------------------------------------------------------------------
 compose:
@@ -108,6 +112,11 @@ gates:
   top_k: 10
   run_broad: true
   run_reach: true
+  # What G_REACH probes with. The fact's verbatim span is an exact substring of
+  # the chunk it has to retrieve, so probing with it measures BM25 self-recall,
+  # not the environment's ceiling. `paraphrase` uses fact_normalized — the
+  # closest thing to a query the agent could actually form.
+  reach_probe: paraphrase          # paraphrase | verbatim | both
   dual_critic: false               # pilot only; measures disagreement_rate
   drop_on_disagreement: true
   run_min: true

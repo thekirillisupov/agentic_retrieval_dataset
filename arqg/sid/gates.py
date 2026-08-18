@@ -9,8 +9,8 @@
 
 `G_BROAD` and `G_REACH` are the two ends of one interval: not trivial, not above
 the environment's ceiling. Both are retrieval-only — `G_REACH` probes with the
-fact's verbatim span and its normalised paraphrase, which S3 already produced —
-so the cheap gates cost no LLM calls at all and run before the 1-of-N selection.
+normalised paraphrase S3 already produced (see `reach_probe_fields`) — so the
+cheap gates cost no LLM calls at all and run before the 1-of-N selection.
 
 Why minimisation is per fact: redundancy lives *between chunks of one fact*, not
 between facts. Leave-one-chunk-out would drop a whole redundant group one member
@@ -19,7 +19,7 @@ at a time; leave-one-fact-out cannot, because facts are atomic by construction.
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -29,7 +29,7 @@ from .config import SidConfig
 from .env import Env
 from .prompts import (ENTAIL_SYS, SOLVE_DEVIL_SYS, SOLVE_SYS, entail_user,
                       solve_user)
-from .retrieval import aggregate_gaps, aggregate_gaps_over_groups
+from .retrieval import aggregate_gaps, aggregate_gaps_over_groups, gap_bin
 from .schema import Candidate, sid_hash
 
 GATE_ORDER = ["G_BROAD", "G_REACH", "G_SOLVE", "G_MIN", "G_REP"]
@@ -79,6 +79,35 @@ class GateStats:
 # --------------------------------------------------------------------------- #
 # Cheap gates: G_BROAD + G_REACH (retrieval only)
 # --------------------------------------------------------------------------- #
+#: `gates.reach_probe` -> the fact fields G_REACH probes with
+_REACH_FIELDS = {
+    "paraphrase": ("fact_normalized",),
+    "verbatim": ("verbatim_span",),
+    "both": ("verbatim_span", "fact_normalized"),
+}
+
+
+def reach_probe_fields(cfg: SidConfig) -> tuple[str, ...]:
+    """Which fact field(s) G_REACH queries with.
+
+    The default is the paraphrase alone. `verbatim_span` is an exact substring
+    of the very chunk it has to retrieve, so probing with it asks whether BM25
+    can find a document from its own text — nearly always yes, whatever the
+    environment's real ceiling is. With the old `any`-over-both rule the
+    paraphrase could therefore never change an outcome, which quietly turned
+    G_REACH into a no-op: `environment_ceiling_pool` stayed empty, the
+    "low G_REACH pass-rate ⇒ the environment's ceiling" reading of
+    `gates.funnel` could not fire, and §7.1's reach-conditioned density median
+    collapsed onto the unconditioned one it is supposed to be compared against.
+    """
+    try:
+        return _REACH_FIELDS[cfg.gates.reach_probe]
+    except KeyError:
+        raise SystemExit(
+            f"unknown gates.reach_probe: {cfg.gates.reach_probe!r} "
+            f"(expected one of {', '.join(_REACH_FIELDS)})") from None
+
+
 async def cheap_gates(cfg: SidConfig, env: Env, cand: Candidate) -> dict[str, Any]:
     k = cfg.gates.top_k
     gold = cand.chunk_ids
@@ -89,11 +118,12 @@ async def cheap_gates(cfg: SidConfig, env: Env, cand: Candidate) -> dict[str, An
     broad_hit = len([g for g in gold if g in hits]) / max(1, len(gold))
     broad_ok = not all(g in hits for g in gold)
 
-    # G_REACH: per gold chunk, one verbatim-oriented and one paraphrased probe.
+    # G_REACH: per gold chunk, one probe per fact (see `reach_probe_fields`).
     reach_queries: list[str] = []
     owner: list[str] = []
     for f in cand.facts:
-        for q in (f.get("verbatim_span", ""), f.get("fact_normalized", "")):
+        for field in reach_probe_fields(cfg):
+            q = f.get(field, "")
             if q:
                 reach_queries.append(q)
                 owner.append(f["chunk_id"])
@@ -274,17 +304,83 @@ async def g_rep(cfg: SidConfig, judge: BaseLLM, env: Env,
 # --------------------------------------------------------------------------- #
 # Stage driver
 # --------------------------------------------------------------------------- #
-def _pick_batch_winners(cfg: SidConfig, scored: list[tuple[Candidate, dict]]
+def _bin_of(cfg: SidConfig, fused_gap: float) -> str:
+    return gap_bin(float(fused_gap), cfg.export.fused_gap_bins)
+
+
+def prior_bins(cfg: SidConfig) -> Counter:
+    """The bins this selector has already committed to.
+
+    Seeded from `gate_winners.jsonl`, which records every selection ever made,
+    so a resumed run keeps balancing where it left off instead of restarting
+    the tally and re-skewing the pool.
+    """
+    bins: Counter = Counter()
+    for row in read_jsonl(cfg.paths.gate_winners):
+        gap = row.get("res", {}).get("metrics", {}).get("fused_gap")
+        if gap is not None:
+            bins[_bin_of(cfg, gap)] += 1
+    return bins
+
+
+def _pick_batch_winners(cfg: SidConfig, scored: list[tuple[Candidate, dict]],
+                        prior: Counter | None = None
                         ) -> list[tuple[Candidate, dict]]:
-    """1-of-N: keep the hardest survivors of each batch. `fused_gap` is the axis
-    that actually predicts retrieval difficulty (§4.3), so it ranks."""
+    """1-of-N selection (plan §4.5).
+
+    `fused_gap` is the axis that predicts retrieval difficulty (§4.3), and
+    ranking a batch by it keeps the hardest candidate. But the members of a
+    batch come from *different* subgraphs with *different* submechanics — they
+    are N different tasks, not N phrasings of one — so "keep the hardest" is a
+    difficulty filter applied to the whole pool, and it pulls directly against
+    the datamix the export grades the pool by (`target_fused_gap_share`, 30/40/30
+    by default): the `low` bin can only ever be filled by a batch whose every
+    member is easy.
+
+    So the default picks, from each batch, the member whose bin is furthest
+    below its target share, breaking ties by difficulty. Batches are walked in
+    `batch_id` order and the running tally carries across runs, so the result
+    does not depend on how the pool was chunked into runs.
+    """
     by_batch: dict[str, list[tuple[Candidate, dict]]] = defaultdict(list)
     for cand, res in scored:
         by_batch[cand.batch_id].append((cand, res))
-    winners: list[tuple[Candidate, dict]] = []
-    for members in by_batch.values():
-        members.sort(key=lambda cr: (-cr[1]["metrics"]["fused_gap"], -len(cr[0].facts)))
-        winners.extend(members[: max(1, cfg.taxonomy.keep_per_batch)])
+    keep = max(1, cfg.taxonomy.keep_per_batch)
+    mode = cfg.taxonomy.batch_selection
+
+    if mode == "hardest":
+        winners: list[tuple[Candidate, dict]] = []
+        for members in by_batch.values():
+            members.sort(key=lambda cr: (-cr[1]["metrics"]["fused_gap"], -len(cr[0].facts)))
+            winners.extend(members[:keep])
+        return winners
+    if mode != "datamix":
+        raise SystemExit(f"unknown taxonomy.batch_selection: {mode!r} "
+                         f"(expected 'datamix' or 'hardest')")
+
+    counts: Counter = Counter(prior or {})
+    target = cfg.export.target_fused_gap_share
+    winners = []
+    for batch_id in sorted(by_batch):
+        members = by_batch[batch_id]
+        left = list(range(len(members)))
+        for _ in range(min(keep, len(members))):
+            total = sum(counts.values())
+
+            def rank(i: int) -> tuple:
+                cand, res = members[i]
+                gap = res["metrics"]["fused_gap"]
+                b = _bin_of(cfg, gap)
+                share = counts[b] / total if total else 0.0
+                # rounded so a deficit tie falls through to difficulty rather
+                # than to float noise
+                return (round(target.get(b, 0.0) - share, 6), gap,
+                        len(cand.facts), cand.candidate_id)
+
+            pick = max(left, key=rank)
+            left.remove(pick)
+            counts[_bin_of(cfg, members[pick][1]["metrics"]["fused_gap"])] += 1
+            winners.append(members[pick])
     return winners
 
 
@@ -350,7 +446,7 @@ async def run_gates(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM,
                 continue
         survivors.append((cand, res))
 
-    new_winners = _pick_batch_winners(cfg, survivors)
+    new_winners = _pick_batch_winners(cfg, survivors, prior_bins(cfg))
     won = {c.candidate_id for c, _ in new_winners}
     for cand, _ in survivors:
         if cand.candidate_id not in won:

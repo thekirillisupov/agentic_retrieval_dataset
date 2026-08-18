@@ -13,6 +13,8 @@ import sys
 import numpy as np
 import pytest
 
+from collections import Counter
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from arqg.sid.compat import run_compat
@@ -38,6 +40,7 @@ from arqg.sid.sections import scope_of, shared_depth
 from arqg.sid.simbridge import CoRetrievability, SimBand, scope_pairs
 from arqg.sid.subgraphs import (_Admissible, _scope_bridges, build_entity_graph,
                                 mine_subgraphs, run_mining)
+from arqg.embeddings import MockEmbedder
 from arqg.schema import Chunk
 from arqg.utils import read_jsonl
 
@@ -526,9 +529,53 @@ def test_g_reach_probes_each_gold_chunk(tmp_path):
     env = asyncio.run(build_env(cfg, version="v0"))
     cand = _candidate(env.corpus, ["org_00.txt::0", "org_02.txt::2"], "вопрос?")
     res = asyncio.run(cheap_gates(cfg, env, cand))
-    # probes come from the facts' own spans, so a real chunk is reachable
+    # the fixture's facts paraphrase their chunk closely enough to find it
     assert res["reach_ok"] is True and res["unreachable"] == []
     asyncio.run(env.aclose())
+
+
+def test_g_reach_probes_with_the_paraphrase_not_the_gold_own_wording(tmp_path):
+    """`verbatim_span` is an exact substring of the chunk it has to retrieve, so
+    probing with it asks whether the index can find a document from its own
+    text. That is nearly always true whatever the environment's ceiling is,
+    and under the old `any`-over-both rule it made the paraphrase — the only
+    probe an agent could actually issue — unable to change any outcome."""
+    from arqg.sid.gates import reach_probe_fields
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    gold = ["org_00.txt::0", "org_02.txt::2"]
+    # a fact whose span is lifted from its chunk but whose paraphrase says
+    # nothing that would retrieve it
+    facts = [{"fact_id": f"f{i}", "chunk_id": c,
+              "verbatim_span": env.corpus.text(c)[:200],
+              "fact_normalized": "нечто произошло"} for i, c in enumerate(gold)]
+    cand = Candidate(candidate_id="c1", batch_id="b1", instantiation_rank=0,
+                     subgraph_id="sg1", corpus="demo", language="ru",
+                     question="вопрос?", answer="ответ", facts=facts,
+                     mechanic="entity_chain", submechanic="x", has_negation=False,
+                     hop_depth=2)
+
+    assert reach_probe_fields(cfg) == ("fact_normalized",)
+    res = asyncio.run(cheap_gates(cfg, env, cand))
+    assert res["reach_ok"] is False, "an unreachable paraphrase must fail G_REACH"
+
+    # the old behaviour is still available, and shows why it never rejected:
+    # the gold's own wording retrieves the gold
+    cfg.gates.reach_probe = "verbatim"
+    assert asyncio.run(cheap_gates(cfg, env, cand))["reach_ok"] is True
+    cfg.gates.reach_probe = "both"
+    assert asyncio.run(cheap_gates(cfg, env, cand))["reach_ok"] is True
+    asyncio.run(env.aclose())
+
+
+def test_unknown_reach_probe_is_refused(tmp_path):
+    from arqg.sid.gates import reach_probe_fields
+
+    cfg = _cfg(tmp_path)
+    cfg.gates.reach_probe = "spans"
+    with pytest.raises(SystemExit):
+        reach_probe_fields(cfg)
 
 
 def test_g_min_removes_a_redundant_fact_and_stops_at_the_floor():
@@ -637,6 +684,258 @@ def test_verification_rejects_out_of_neighbourhood_candidates(tmp_path):
     inj = TaskInjection(task_id="t1")
     kept = asyncio.run(verify_candidates(cfg, judge, env, rec, [far], model, inj))
     assert kept == [] and inj.rejected["neighborhood"] == 1
+    asyncio.run(env.aclose())
+
+
+def test_injected_chunk_is_embedded_the_way_the_index_holds_it(tmp_path):
+    """A distractor is a chunk of this index like any other.
+
+    With `embed_with_title` on, every v0 chunk is embedded as "title\ntext".
+    Embedding a distractor as bare text puts it somewhere else in the space
+    than where it will sit once v1 is rebuilt from disk — so §7.5's
+    "does it land in the gold neighbourhood?" would be measured on a vector
+    nothing ever retrieves against.
+    """
+    from arqg.sid.distractors import _passage, inject
+
+    cfg = _cfg(tmp_path)
+    assert cfg.embed.embed_with_title
+    env = asyncio.run(build_env(cfg, version="v0"))
+    donor = env.corpus.get("org_00.txt::1")
+    assert donor.title, "the fixture must carry a breadcrumb title"
+
+    cand = DistractorCandidate(text="Совсем другой текст про измерения.",
+                               level="L2_perturbed", dtype="near_duplicate",
+                               source_chunk_id=donor.id, title=donor.title)
+    assert _passage(env, cand) == f"{donor.title}\n{cand.text}"
+
+    vecs = asyncio.run(env.embedder.embed([_passage(env, cand)], kind="passage"))
+    rec = {"task_id": "t1", "question": "вопрос?", "answer": "ответ",
+           "gold_chunk_ids": ["org_00.txt::0"]}
+    summary = inject(cfg, env, rec, TaskInjection(task_id="t1", accepted=[cand]), vecs)
+    cid = summary["chunk_ids"][0]
+
+    with_title = asyncio.run(
+        env.embedder.embed([f"{donor.title}\n{cand.text}"], kind="passage"))[0]
+    without = asyncio.run(env.embedder.embed([cand.text], kind="passage"))[0]
+    assert np.allclose(env.dense.vec(cid), with_title)
+    assert not np.allclose(env.dense.vec(cid), without)
+    # and the title the chunk carries is the one that was embedded, so a
+    # rebuild of v1 from corpus_injected.jsonl reproduces the same vector
+    assert env.corpus.get(cid).title == donor.title
+    asyncio.run(env.aclose())
+
+
+def test_generated_distractor_inherits_its_donor_title(tmp_path):
+    from arqg.sid.distractors import _gen_l2
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    gen = make_sid_client(cfg.llm)
+    rec = {"question": "вопрос?", "answer": "ответ",
+           "facts": [{"discriminating_attributes": ["date:2015"]}]}
+    cand = asyncio.run(_gen_l2(gen, env, rec, "org_00.txt::1"))
+    assert cand is not None
+    assert cand.title == env.corpus.get("org_00.txt::1").title
+    asyncio.run(gen.aclose())
+    asyncio.run(env.aclose())
+
+
+def test_v1_index_is_saved_so_the_next_stage_does_not_re_embed(tmp_path):
+    """The dense cache is keyed on the corpus checksum, which every injection
+    changes. If S6 does not save the index it mutated, S7 — and any resumed
+    `distract` — re-embeds the whole corpus for vectors the process was
+    already holding."""
+    import shutil
+
+    from arqg.sid.distractors import save_index
+
+    class CountingEmbedder(MockEmbedder):
+        def __init__(self, cfg):
+            super().__init__(cfg)
+            self.embedded = 0
+
+        async def embed(self, texts, kind):
+            if kind == "passage":
+                self.embedded += len(texts)
+            return await super().embed(texts, kind)
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    chunk = env.corpus.inject(donor_file="org_00.txt", text="Текст-дистрактор для t1.",
+                              task_id="t1", level="L2_perturbed",
+                              dtype="near_duplicate", source_chunk_id="org_00.txt::1",
+                              title=env.corpus.get("org_00.txt::1").title)
+    vec = asyncio.run(env.embedder.embed([chunk.raw_text], kind="passage"))
+    env.searcher.add_documents([chunk.id], [chunk.raw_text], vec)
+    save_index(cfg, env)
+    asyncio.run(env.aclose())
+
+    counting = CountingEmbedder(cfg.embed)
+    env2 = asyncio.run(build_env(cfg, version="v1", embedder=counting))
+    assert counting.embedded == 0, "v1 must come from cache, not from the embedder"
+    assert chunk.id in env2.dense.ids and len(env2.corpus) == len(env2.dense.ids)
+    asyncio.run(env2.aclose())
+
+    # without the saved index the same stage pays for the whole corpus again —
+    # that is the regression this guards
+    shutil.rmtree(cfg.paths.dense_dir("v1"))
+    counting2 = CountingEmbedder(cfg.embed)
+    env3 = asyncio.run(build_env(cfg, version="v1", embedder=counting2))
+    assert counting2.embedded == len(env3.corpus)
+    asyncio.run(env3.aclose())
+
+
+# --------------------------------------------------------------------------- #
+# §4.5 — 1-of-N selection
+# --------------------------------------------------------------------------- #
+def _scored(batch: str, gaps: list[float]) -> list:
+    """One 1-of-N batch: members from different subgraphs, at the given gaps."""
+    out = []
+    for i, gap in enumerate(gaps):
+        cand = Candidate(candidate_id=f"{batch}_{i}", batch_id=batch,
+                         instantiation_rank=i, subgraph_id=f"sg_{batch}_{i}",
+                         corpus="demo", language="ru", question="q", answer="a",
+                         facts=[{"fact_id": "f1", "chunk_id": "c1"},
+                                {"fact_id": "f2", "chunk_id": "c2"}],
+                         mechanic="entity_chain", submechanic="x",
+                         has_negation=False, hop_depth=2)
+        out.append((cand, {"metrics": {"fused_gap": gap}}))
+    return out
+
+
+def test_batch_selection_fills_the_datamix_instead_of_taking_the_hardest():
+    """The members of a batch are different subgraphs — N different tasks, not N
+    phrasings of one. Always keeping the hardest is a difficulty filter over the
+    whole pool, and it starves the `low` bin the export grades against."""
+    from arqg.sid.gates import _pick_batch_winners
+
+    cfg = SidConfig()
+    # ten batches, each offering one candidate per bin
+    scored = [x for b in range(10) for x in _scored(f"b{b}", [0.1, 0.5, 0.9])]
+
+    hardest = SidConfig()
+    hardest.taxonomy.batch_selection = "hardest"
+    bins = Counter(gap_bin(r["metrics"]["fused_gap"], hardest.export.fused_gap_bins)
+                   for _, r in _pick_batch_winners(hardest, list(scored)))
+    assert bins == Counter({"high": 10}), "the old rule can only ever pick high"
+
+    picked = _pick_batch_winners(cfg, list(scored))
+    bins = Counter(gap_bin(r["metrics"]["fused_gap"], cfg.export.fused_gap_bins)
+                   for _, r in picked)
+    assert len(picked) == 10, "one survivor per batch, as before"
+    shares = {b: bins[b] / len(picked) for b in cfg.export.target_fused_gap_share}
+    assert shares == cfg.export.target_fused_gap_share, shares
+
+
+def test_batch_selection_is_deterministic_and_resumes_its_tally():
+    """Balancing must not restart when a run is resumed — otherwise the pool
+    skews by however it happened to be chunked into runs."""
+    from arqg.sid.gates import _pick_batch_winners
+
+    cfg = SidConfig()
+    scored = [x for b in range(6) for x in _scored(f"b{b}", [0.1, 0.5, 0.9])]
+
+    one_go = _pick_batch_winners(cfg, list(scored))
+    first = _pick_batch_winners(cfg, [x for x in scored if x[0].batch_id < "b3"])
+    prior = Counter(gap_bin(r["metrics"]["fused_gap"], cfg.export.fused_gap_bins)
+                    for _, r in first)
+    second = _pick_batch_winners(cfg, [x for x in scored if x[0].batch_id >= "b3"], prior)
+    assert [c.candidate_id for c, _ in first + second] == \
+           [c.candidate_id for c, _ in one_go]
+
+
+def test_unknown_batch_selection_is_refused():
+    from arqg.sid.gates import _pick_batch_winners
+
+    cfg = SidConfig()
+    cfg.taxonomy.batch_selection = "random"
+    with pytest.raises(SystemExit):
+        _pick_batch_winners(cfg, _scored("b0", [0.1, 0.9]))
+
+
+# --------------------------------------------------------------------------- #
+# S7 — isolation
+# --------------------------------------------------------------------------- #
+def _iso_rec(task_id: str, gold: list[str], question: str) -> dict:
+    return {"task_id": task_id, "question": question, "answer": "ответ",
+            "gold_chunk_ids": gold, "provenance": {"gates_passed": ["G_SOLVE"]}}
+
+
+class _Judge:
+    """Isolation judge with a fixed verdict."""
+
+    def __init__(self, alternative: list[str] | None = None):
+        self.alternative = alternative or []
+        self.calls = 0
+
+    async def complete_json(self, *_a, **_k):
+        self.calls += 1
+        return {"alternative_path_chunk_ids": list(self.alternative)}
+
+
+def test_isolation_keeps_one_of_two_tasks_with_the_same_gold_set(tmp_path):
+    """The labelling hole the old rule could never see: a gold chunk shared
+    with another task is *this* task's gold too, so it was filtered out before
+    the check ran."""
+    from arqg.sid.isolation import run_isolation
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    gold = ["org_00.txt::0", "org_00.txt::1"]
+    records = [_iso_rec("syn_b", gold, "что известно о компании?"),
+               _iso_rec("syn_a", list(reversed(gold)), "когда основана компания?")]
+    kept = asyncio.run(run_isolation(cfg, env, _Judge(), records))
+
+    assert [r["task_id"] for r in kept] == ["syn_a"], "the lowest task_id survives"
+    decisions = {d["task_id"]: d for d in read_jsonl(cfg.paths.isolation_decisions)}
+    assert decisions["syn_b"]["outcome"] == "duplicate_gold_set"
+    assert decisions["syn_b"]["same_gold_as"] == "syn_a"
+    report = json.load(open(cfg.paths.isolation_report, encoding="utf-8"))
+    assert report["excluded"]["duplicate_gold_set"] == 1
+    asyncio.run(env.aclose())
+
+
+def test_isolation_tolerates_co_retrieval_of_another_task_gold(tmp_path):
+    """Two neighbouring tasks retrieving each other's gold is the normal state
+    once S1 mines within a folder — and it used to kill both of them, without
+    a judge ever being asked whether either chunk answers the other question."""
+    from arqg.sid.isolation import run_isolation
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    a_gold, b_gold = ["org_00.txt::0", "org_00.txt::1"], ["org_02.txt::0", "org_02.txt::2"]
+    # questions that literally quote the other task's gold, so each probe is
+    # guaranteed to surface it — exactly the condition the old rule fired on
+    records = [_iso_rec("syn_a", a_gold, env.corpus.text(b_gold[0])[:300]),
+               _iso_rec("syn_b", b_gold, env.corpus.text(a_gold[0])[:300])]
+    probes = asyncio.run(env.searcher.probe_many([r["question"] for r in records],
+                                                 cfg.isolation.top_k))
+    assert b_gold[0] in probes[0].hit_ids and a_gold[0] in probes[1].hit_ids
+
+    judge = _Judge()                      # no chunk actually answers the question
+    kept = asyncio.run(run_isolation(cfg, env, judge, records))
+    assert {r["task_id"] for r in kept} == {"syn_a", "syn_b"}
+    assert judge.calls == 2, "the decision must go through the judge, not the id"
+    asyncio.run(env.aclose())
+
+
+def test_isolation_still_drops_a_judged_alternative_path(tmp_path):
+    """Tolerating co-retrieval is not tolerating a shortcut: when the judge says
+    another task's gold does answer this question, the task goes."""
+    from arqg.sid.isolation import run_isolation
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    a_gold, b_gold = ["org_00.txt::0", "org_00.txt::1"], ["org_02.txt::0", "org_02.txt::2"]
+    records = [_iso_rec("syn_a", a_gold, env.corpus.text(b_gold[0])[:300]),
+               _iso_rec("syn_b", b_gold, "нейтральный вопрос про парк?")]
+    kept = asyncio.run(run_isolation(cfg, env, _Judge([b_gold[0]]), records))
+
+    assert "syn_a" not in {r["task_id"] for r in kept}
+    report = json.load(open(cfg.paths.isolation_report, encoding="utf-8"))
+    assert report["excluded"]["other_task_gold"] == 1
+    assert report["gold_overlap"]["tasks_sharing_a_gold_chunk"] == 0
     asyncio.run(env.aclose())
 
 
