@@ -9,8 +9,8 @@
 
 `G_BROAD` and `G_REACH` are the two ends of one interval: not trivial, not above
 the environment's ceiling. Both are retrieval-only — `G_REACH` probes with the
-fact's verbatim span and its normalised paraphrase, which S3 already produced —
-so the cheap gates cost no LLM calls at all and run before the 1-of-N selection.
+normalised paraphrase S3 already produced (see `reach_probe_fields`) — so the
+cheap gates cost no LLM calls at all and run before the 1-of-N selection.
 
 Why minimisation is per fact: redundancy lives *between chunks of one fact*, not
 between facts. Leave-one-chunk-out would drop a whole redundant group one member
@@ -79,6 +79,35 @@ class GateStats:
 # --------------------------------------------------------------------------- #
 # Cheap gates: G_BROAD + G_REACH (retrieval only)
 # --------------------------------------------------------------------------- #
+#: `gates.reach_probe` -> the fact fields G_REACH probes with
+_REACH_FIELDS = {
+    "paraphrase": ("fact_normalized",),
+    "verbatim": ("verbatim_span",),
+    "both": ("verbatim_span", "fact_normalized"),
+}
+
+
+def reach_probe_fields(cfg: SidConfig) -> tuple[str, ...]:
+    """Which fact field(s) G_REACH queries with.
+
+    The default is the paraphrase alone. `verbatim_span` is an exact substring
+    of the very chunk it has to retrieve, so probing with it asks whether BM25
+    can find a document from its own text — nearly always yes, whatever the
+    environment's real ceiling is. With the old `any`-over-both rule the
+    paraphrase could therefore never change an outcome, which quietly turned
+    G_REACH into a no-op: `environment_ceiling_pool` stayed empty, the
+    "low G_REACH pass-rate ⇒ the environment's ceiling" reading of
+    `gates.funnel` could not fire, and §7.1's reach-conditioned density median
+    collapsed onto the unconditioned one it is supposed to be compared against.
+    """
+    try:
+        return _REACH_FIELDS[cfg.gates.reach_probe]
+    except KeyError:
+        raise SystemExit(
+            f"unknown gates.reach_probe: {cfg.gates.reach_probe!r} "
+            f"(expected one of {', '.join(_REACH_FIELDS)})") from None
+
+
 async def cheap_gates(cfg: SidConfig, env: Env, cand: Candidate) -> dict[str, Any]:
     k = cfg.gates.top_k
     gold = cand.chunk_ids
@@ -89,11 +118,12 @@ async def cheap_gates(cfg: SidConfig, env: Env, cand: Candidate) -> dict[str, An
     broad_hit = len([g for g in gold if g in hits]) / max(1, len(gold))
     broad_ok = not all(g in hits for g in gold)
 
-    # G_REACH: per gold chunk, one verbatim-oriented and one paraphrased probe.
+    # G_REACH: per gold chunk, one probe per fact (see `reach_probe_fields`).
     reach_queries: list[str] = []
     owner: list[str] = []
     for f in cand.facts:
-        for q in (f.get("verbatim_span", ""), f.get("fact_normalized", "")):
+        for field in reach_probe_fields(cfg):
+            q = f.get(field, "")
             if q:
                 reach_queries.append(q)
                 owner.append(f["chunk_id"])

@@ -527,9 +527,53 @@ def test_g_reach_probes_each_gold_chunk(tmp_path):
     env = asyncio.run(build_env(cfg, version="v0"))
     cand = _candidate(env.corpus, ["org_00.txt::0", "org_02.txt::2"], "вопрос?")
     res = asyncio.run(cheap_gates(cfg, env, cand))
-    # probes come from the facts' own spans, so a real chunk is reachable
+    # the fixture's facts paraphrase their chunk closely enough to find it
     assert res["reach_ok"] is True and res["unreachable"] == []
     asyncio.run(env.aclose())
+
+
+def test_g_reach_probes_with_the_paraphrase_not_the_gold_own_wording(tmp_path):
+    """`verbatim_span` is an exact substring of the chunk it has to retrieve, so
+    probing with it asks whether the index can find a document from its own
+    text. That is nearly always true whatever the environment's ceiling is,
+    and under the old `any`-over-both rule it made the paraphrase — the only
+    probe an agent could actually issue — unable to change any outcome."""
+    from arqg.sid.gates import reach_probe_fields
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    gold = ["org_00.txt::0", "org_02.txt::2"]
+    # a fact whose span is lifted from its chunk but whose paraphrase says
+    # nothing that would retrieve it
+    facts = [{"fact_id": f"f{i}", "chunk_id": c,
+              "verbatim_span": env.corpus.text(c)[:200],
+              "fact_normalized": "нечто произошло"} for i, c in enumerate(gold)]
+    cand = Candidate(candidate_id="c1", batch_id="b1", instantiation_rank=0,
+                     subgraph_id="sg1", corpus="demo", language="ru",
+                     question="вопрос?", answer="ответ", facts=facts,
+                     mechanic="entity_chain", submechanic="x", has_negation=False,
+                     hop_depth=2)
+
+    assert reach_probe_fields(cfg) == ("fact_normalized",)
+    res = asyncio.run(cheap_gates(cfg, env, cand))
+    assert res["reach_ok"] is False, "an unreachable paraphrase must fail G_REACH"
+
+    # the old behaviour is still available, and shows why it never rejected:
+    # the gold's own wording retrieves the gold
+    cfg.gates.reach_probe = "verbatim"
+    assert asyncio.run(cheap_gates(cfg, env, cand))["reach_ok"] is True
+    cfg.gates.reach_probe = "both"
+    assert asyncio.run(cheap_gates(cfg, env, cand))["reach_ok"] is True
+    asyncio.run(env.aclose())
+
+
+def test_unknown_reach_probe_is_refused(tmp_path):
+    from arqg.sid.gates import reach_probe_fields
+
+    cfg = _cfg(tmp_path)
+    cfg.gates.reach_probe = "spans"
+    with pytest.raises(SystemExit):
+        reach_probe_fields(cfg)
 
 
 def test_g_min_removes_a_redundant_fact_and_stops_at_the_floor():

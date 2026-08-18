@@ -148,6 +148,11 @@ gates:
   top_k: 10
   run_broad: true
   run_reach: true
+  # What G_REACH probes with. The fact's verbatim span is an exact substring of
+  # the chunk it has to retrieve, so probing with it measures BM25 self-recall,
+  # not the environment's ceiling. `paraphrase` uses fact_normalized — the
+  # closest thing to a query the agent could actually form.
+  reach_probe: paraphrase          # paraphrase | verbatim | both
   dual_critic: false               # pilot only; measures disagreement_rate
   drop_on_disagreement: true
   run_min: true

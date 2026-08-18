@@ -57,9 +57,9 @@ individually: `python run_sid.py gates --config …`.
 ### Why the order is what it is
 
 - **Cheap gates before expensive ones.** `G_BROAD` and `G_REACH` need no LLM
-  call at all — `G_REACH` probes with the fact's own verbatim span and the
-  normalised paraphrase that S3 already produced. So they run on the full
-  1-of-N batch, and only the surviving winner pays for a critic.
+  call at all — `G_REACH` probes with the normalised paraphrase S3 already
+  produced. So they run on the full 1-of-N batch, and only the surviving winner
+  pays for a critic.
 - **Minimisation before injection.** Minimality is a property of the labels;
   injection does not change it, so `G_MIN`/`G_REP` never re-run.
 - **Isolation after injection, never before.** A distractor built for task A
@@ -241,13 +241,27 @@ section stays reachable for `G_REACH`.
 | Gate | Check | Rejects |
 |---|---|---|
 | `G_BROAD` | the whole question as ONE query must not return the whole gold set | trivial tasks |
-| `G_REACH` | every gold chunk reachable by at least one probe | tasks above the environment's ceiling → `environment_ceiling_pool.jsonl` |
+| `G_REACH` | every gold chunk reachable by its fact's paraphrase | tasks above the environment's ceiling → `environment_ceiling_pool.jsonl` |
 | `G_SOLVE` | answer uniquely derivable from the gold facts; question leaks neither the answer nor the intermediate entities | unsolvable, distorted, self-answering |
 | `G_MIN` | leave-one-**fact**-out, greedy, re-checking every survivor after each removal | bloated gold sets |
 | `G_REP` | every chunk that states a surviving fact joins that fact's group | nothing — it builds labels |
 
 `G_BROAD` and `G_REACH` are the two ends of one interval: not trivial, not
 unreachable.
+
+**G_REACH probes with the paraphrase, not with the gold's own wording.** A
+fact's `verbatim_span` is by construction an exact substring of the chunk it has
+to retrieve, so probing with it asks whether the index can find a document from
+its own text — nearly always yes, whatever the environment's real ceiling is.
+Probing with both and accepting either (the original rule) therefore made the
+paraphrase — the only probe an agent could actually issue — unable to change any
+outcome, and quietly turned the gate into a no-op: `environment_ceiling_pool`
+stays empty, the "low `G_REACH` pass-rate ⇒ the environment's ceiling" reading of
+`gates.funnel` cannot fire, and §7.1's reach-conditioned density median collapses
+onto the unconditioned one it exists to be compared against. `gates.reach_probe`
+selects `paraphrase` (default), `verbatim` or `both`; the default also halves the
+gate's embedding bill, which on a rate-limited embedder is what the cheap gates
+actually cost.
 
 **Minimisation is per fact, not per chunk.** Redundancy lives between the
 chunks of one fact, not between facts. If a fact is covered by `{c₁, c₂, c₃}`,

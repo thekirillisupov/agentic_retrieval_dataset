@@ -141,6 +141,15 @@ class GatesConfig:
     run_broad: bool = True
     # G_REACH: every gold chunk must be retrievable by at least one probe.
     run_reach: bool = True
+    # What that probe is made of. The fact's `verbatim_span` is by construction
+    # an exact substring of the chunk it has to retrieve, so BM25 returns it
+    # almost always and the gate answers a question nobody asked: an agent
+    # never holds the gold's own wording. `"paraphrase"` probes with
+    # `fact_normalized` — the closest thing to a query the agent could form —
+    # which is what makes G_REACH a ceiling measurement rather than a
+    # self-retrieval check, and halves its embedding bill. `"verbatim"` and
+    # `"both"` (either probe suffices) keep the old behaviour available.
+    reach_probe: str = "paraphrase"       # paraphrase | verbatim | both
     # G_SOLVE dual-critic — pilot only (plan §6). Off by default: one critic.
     dual_critic: bool = False
     drop_on_disagreement: bool = True

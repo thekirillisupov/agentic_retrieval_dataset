@@ -40,6 +40,7 @@ from ..utils import append_jsonl, load_done_keys, log, read_jsonl
 from .config import SidConfig
 from .density import DensityModel
 from .env import Env, dense_signature, passage_text
+from .gates import reach_probe_fields
 from .prompts import (DISTRACTOR_CHECK_SYS, GENERATE_SYS, PERTURB_SYS,
                       TRANSPLANT_SYS, distractor_check_user,
                       generate_distractor_user, perturb_user, transplant_user)
@@ -483,7 +484,10 @@ async def reach_recheck(cfg: SidConfig, env: Env, records: list[dict]) -> dict[s
     for rec in sample:
         queries, owners = [], []
         for f in rec["facts"]:
-            for q in (f.get("verbatim_span", ""), f.get("fact_normalized", "")):
+            # the same probe G_REACH used, or the before/after numbers are not
+            # measuring the same thing
+            for field in reach_probe_fields(cfg):
+                q = f.get(field, "")
                 if q:
                     queries.append(q)
                     owners.append(f["chunk_id"])
