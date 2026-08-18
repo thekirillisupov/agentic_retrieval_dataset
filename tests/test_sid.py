@@ -13,6 +13,8 @@ import sys
 import numpy as np
 import pytest
 
+from collections import Counter
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from arqg.sid.compat import run_compat
@@ -782,6 +784,74 @@ def test_v1_index_is_saved_so_the_next_stage_does_not_re_embed(tmp_path):
     env3 = asyncio.run(build_env(cfg, version="v1", embedder=counting2))
     assert counting2.embedded == len(env3.corpus)
     asyncio.run(env3.aclose())
+
+
+# --------------------------------------------------------------------------- #
+# §4.5 — 1-of-N selection
+# --------------------------------------------------------------------------- #
+def _scored(batch: str, gaps: list[float]) -> list:
+    """One 1-of-N batch: members from different subgraphs, at the given gaps."""
+    out = []
+    for i, gap in enumerate(gaps):
+        cand = Candidate(candidate_id=f"{batch}_{i}", batch_id=batch,
+                         instantiation_rank=i, subgraph_id=f"sg_{batch}_{i}",
+                         corpus="demo", language="ru", question="q", answer="a",
+                         facts=[{"fact_id": "f1", "chunk_id": "c1"},
+                                {"fact_id": "f2", "chunk_id": "c2"}],
+                         mechanic="entity_chain", submechanic="x",
+                         has_negation=False, hop_depth=2)
+        out.append((cand, {"metrics": {"fused_gap": gap}}))
+    return out
+
+
+def test_batch_selection_fills_the_datamix_instead_of_taking_the_hardest():
+    """The members of a batch are different subgraphs — N different tasks, not N
+    phrasings of one. Always keeping the hardest is a difficulty filter over the
+    whole pool, and it starves the `low` bin the export grades against."""
+    from arqg.sid.gates import _pick_batch_winners
+
+    cfg = SidConfig()
+    # ten batches, each offering one candidate per bin
+    scored = [x for b in range(10) for x in _scored(f"b{b}", [0.1, 0.5, 0.9])]
+
+    hardest = SidConfig()
+    hardest.taxonomy.batch_selection = "hardest"
+    bins = Counter(gap_bin(r["metrics"]["fused_gap"], hardest.export.fused_gap_bins)
+                   for _, r in _pick_batch_winners(hardest, list(scored)))
+    assert bins == Counter({"high": 10}), "the old rule can only ever pick high"
+
+    picked = _pick_batch_winners(cfg, list(scored))
+    bins = Counter(gap_bin(r["metrics"]["fused_gap"], cfg.export.fused_gap_bins)
+                   for _, r in picked)
+    assert len(picked) == 10, "one survivor per batch, as before"
+    shares = {b: bins[b] / len(picked) for b in cfg.export.target_fused_gap_share}
+    assert shares == cfg.export.target_fused_gap_share, shares
+
+
+def test_batch_selection_is_deterministic_and_resumes_its_tally():
+    """Balancing must not restart when a run is resumed — otherwise the pool
+    skews by however it happened to be chunked into runs."""
+    from arqg.sid.gates import _pick_batch_winners
+
+    cfg = SidConfig()
+    scored = [x for b in range(6) for x in _scored(f"b{b}", [0.1, 0.5, 0.9])]
+
+    one_go = _pick_batch_winners(cfg, list(scored))
+    first = _pick_batch_winners(cfg, [x for x in scored if x[0].batch_id < "b3"])
+    prior = Counter(gap_bin(r["metrics"]["fused_gap"], cfg.export.fused_gap_bins)
+                    for _, r in first)
+    second = _pick_batch_winners(cfg, [x for x in scored if x[0].batch_id >= "b3"], prior)
+    assert [c.candidate_id for c, _ in first + second] == \
+           [c.candidate_id for c, _ in one_go]
+
+
+def test_unknown_batch_selection_is_refused():
+    from arqg.sid.gates import _pick_batch_winners
+
+    cfg = SidConfig()
+    cfg.taxonomy.batch_selection = "random"
+    with pytest.raises(SystemExit):
+        _pick_batch_winners(cfg, _scored("b0", [0.1, 0.9]))
 
 
 # --------------------------------------------------------------------------- #

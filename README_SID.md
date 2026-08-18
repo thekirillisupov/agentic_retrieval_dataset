@@ -294,7 +294,7 @@ the pool when there is a trainer to split it for.
 | Field | What it decides |
 |---|---|
 | `gold.share_singleton_groups` | **< 0.95 ⇒ NDCG must be computed over fact groups**, with `B_i` counted in groups. At chunk granularity the metric penalises correct behaviour. The field `gold.ndcg_granularity` states the verdict. |
-| `complexity.fused_gap_share` | the datamix balancing axis; target is 30/40/30 low/mid/high |
+| `complexity.fused_gap_share` | the datamix balancing axis; the target is `export.target_fused_gap_share` (30/40/30 low/mid/high), and S4's 1-of-N selection already steers towards it, so a residual skew here is the corpus, not the selector |
 | `complexity.lexicon_arm_size` | tasks with `lex_gap` high **and** `fused_gap` high — the only population where a `lexicon` field in `<state>` can show an effect. If it is empty, that hypothesis is untestable on this corpus, and `dense_gap` says why. |
 | `distractors.share_L3` | > 0.10 means full generation is being used as a crutch |
 | `distractors.share_tasks_with_empty_L2_band` | > 0.25 means the corpus is too sparse for this class of task — revisit subgraph selection rather than flooding the index with synthetic text |
@@ -380,6 +380,7 @@ hours of API calls per resume.
 | chunk text is the only prompt input | the section breadcrumb is passed to S3 as context, never as a fact source | a bare markdown table row does not say which product it belongs to, and the composer fills that gap by inventing. `verbatim_span` is still matched against the chunk alone. |
 | incremental composition, base → +hop → +constraint, `max_compose_iters = 4` | one-shot composition + repair against the critic's objection, `max_compose_iters = 2` | same corrective signal, a fraction of the calls |
 | `N = 6` candidates per cell | `N = 3` (configurable) | cost; the mechanism is what matters at v1 |
+| 1-of-N keeps the hardest candidate | keeps the one whose `fused_gap` bin is furthest below `export.target_fused_gap_share` | the batch's members are different subgraphs — N different tasks, not N phrasings of one — so "keep the hardest" is a difficulty filter over the whole pool, and it starves the `low` bin the export grades against. `taxonomy.batch_selection: hardest` restores the old rule |
 | LLM proposes submechanics per corpus | fixed grounded list per mechanic | they are local diversity, not cells; a corpus that cannot support a cell fails its gates and shows up in `gate_stats` |
 | dual-critic on the pilot | implemented, off by default (`gates.dual_critic`) | it is a one-off purchase of information, per the plan itself |
 | teacher trajectories, SFT filtering by teacher recall | **not implemented** | needs the RL harness — four tools, the `<state>` format, per-episode doc_id remapping. `export.py` produces exactly the pool those would be collected on. |

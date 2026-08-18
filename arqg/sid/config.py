@@ -114,6 +114,13 @@ class TaxonomyConfig:
     # subgraphs with *different* submechanics; the best `keep_per_batch` go on.
     candidates_per_cell: int = 3
     keep_per_batch: int = 1
+    # How the batch's survivor is chosen. `"hardest"` takes the largest
+    # `fused_gap`, which is a difficulty filter rather than a diversity one and
+    # pulls against `export.target_fused_gap_share`: the "low" bin is starved by
+    # construction, and the datamix then reports a skew the selector caused.
+    # `"datamix"` picks the survivor whose bin is furthest below its target
+    # share, so the pool the export has to balance is already balanced.
+    batch_selection: str = "datamix"      # datamix | hardest
     seed: int = 17
 
 
@@ -212,6 +219,12 @@ class ExportConfig:
         # upper bound of each bin; "high" takes the rest
         "low": 0.33,
         "mid": 0.66,
+    })
+    # The datamix the pool is aimed at (plan §9.3). Read both by the S8 report
+    # and by S4's 1-of-N selection, so the target the stats grade against is the
+    # one the selection was steering towards.
+    target_fused_gap_share: dict[str, float] = field(default_factory=lambda: {
+        "low": 0.30, "mid": 0.40, "high": 0.30,
     })
     seed: int = 31
 

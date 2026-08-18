@@ -118,6 +118,10 @@ taxonomy:
   negation_rate: 0.20              # plan wants >= 15% of tasks with negation
   candidates_per_cell: 3           # 1-of-N local diversity (plan says 6)
   keep_per_batch: 1
+  # How the batch's survivor is chosen. `hardest` keeps the largest fused_gap,
+  # which starves the "low" bin the export grades the pool against; `datamix`
+  # keeps the member whose bin is furthest below export.target_fused_gap_share.
+  batch_selection: datamix          # datamix | hardest
 
 # --- S3 --------------------------------------------------------------------
 compose:

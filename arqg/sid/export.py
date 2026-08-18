@@ -164,7 +164,11 @@ def split_pool(cfg: SidConfig, tasks: list[dict]) -> dict[str, list[dict]]:
     return {"train": train, "holdout": holdout}
 
 
-def datamix_stats(tasks: list[dict]) -> dict[str, Any]:
+DEFAULT_FUSED_GAP_TARGET = {"low": 0.30, "mid": 0.40, "high": 0.30}
+
+
+def datamix_stats(tasks: list[dict],
+                  target_fused_gap_share: dict[str, float] | None = None) -> dict[str, Any]:
     def tally(fn) -> dict[str, int]:
         return dict(Counter(fn(t) for t in tasks))
 
@@ -200,7 +204,11 @@ def datamix_stats(tasks: list[dict]) -> dict[str, Any]:
             "hop_depth": tally(lambda t: str(t["complexity"]["hop_depth"])),
             "fused_gap_bins": fused_bins,
             "fused_gap_share": {k: round(v / n, 4) for k, v in fused_bins.items()},
-            "target_fused_gap_share": {"low": 0.30, "mid": 0.40, "high": 0.30},
+            # the same target S4's 1-of-N selection steers towards, so this
+            # grades the pool against the goal it was built for rather than a
+            # second one written down here
+            "target_fused_gap_share": dict(
+                target_fused_gap_share or DEFAULT_FUSED_GAP_TARGET),
             "lexicon_arm_size": sum(1 for t in tasks
                                     if t["complexity"].get("in_lexicon_arm")),
             "sparse_origin": sum(1 for t in tasks
@@ -265,7 +273,7 @@ def run_export(cfg: SidConfig, records: list[dict],
         write_jsonl(cfg.paths.split(name), rows)
         log.info("S8: split %-8s %d tasks -> %s", name, len(rows), cfg.paths.split(name))
 
-    stats = datamix_stats(tasks)
+    stats = datamix_stats(tasks, cfg.export.target_fused_gap_share)
     stats["splits"] = {k: len(v) for k, v in splits.items()}
     stats["deduplicated"] = dropped
     if extra_stats:
