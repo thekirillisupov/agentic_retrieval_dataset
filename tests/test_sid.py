@@ -741,6 +741,91 @@ def test_v1_index_is_saved_so_the_next_stage_does_not_re_embed(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# S7 — isolation
+# --------------------------------------------------------------------------- #
+def _iso_rec(task_id: str, gold: list[str], question: str) -> dict:
+    return {"task_id": task_id, "question": question, "answer": "ответ",
+            "gold_chunk_ids": gold, "provenance": {"gates_passed": ["G_SOLVE"]}}
+
+
+class _Judge:
+    """Isolation judge with a fixed verdict."""
+
+    def __init__(self, alternative: list[str] | None = None):
+        self.alternative = alternative or []
+        self.calls = 0
+
+    async def complete_json(self, *_a, **_k):
+        self.calls += 1
+        return {"alternative_path_chunk_ids": list(self.alternative)}
+
+
+def test_isolation_keeps_one_of_two_tasks_with_the_same_gold_set(tmp_path):
+    """The labelling hole the old rule could never see: a gold chunk shared
+    with another task is *this* task's gold too, so it was filtered out before
+    the check ran."""
+    from arqg.sid.isolation import run_isolation
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    gold = ["org_00.txt::0", "org_00.txt::1"]
+    records = [_iso_rec("syn_b", gold, "что известно о компании?"),
+               _iso_rec("syn_a", list(reversed(gold)), "когда основана компания?")]
+    kept = asyncio.run(run_isolation(cfg, env, _Judge(), records))
+
+    assert [r["task_id"] for r in kept] == ["syn_a"], "the lowest task_id survives"
+    decisions = {d["task_id"]: d for d in read_jsonl(cfg.paths.isolation_decisions)}
+    assert decisions["syn_b"]["outcome"] == "duplicate_gold_set"
+    assert decisions["syn_b"]["same_gold_as"] == "syn_a"
+    report = json.load(open(cfg.paths.isolation_report, encoding="utf-8"))
+    assert report["excluded"]["duplicate_gold_set"] == 1
+    asyncio.run(env.aclose())
+
+
+def test_isolation_tolerates_co_retrieval_of_another_task_gold(tmp_path):
+    """Two neighbouring tasks retrieving each other's gold is the normal state
+    once S1 mines within a folder — and it used to kill both of them, without
+    a judge ever being asked whether either chunk answers the other question."""
+    from arqg.sid.isolation import run_isolation
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    a_gold, b_gold = ["org_00.txt::0", "org_00.txt::1"], ["org_02.txt::0", "org_02.txt::2"]
+    # questions that literally quote the other task's gold, so each probe is
+    # guaranteed to surface it — exactly the condition the old rule fired on
+    records = [_iso_rec("syn_a", a_gold, env.corpus.text(b_gold[0])[:300]),
+               _iso_rec("syn_b", b_gold, env.corpus.text(a_gold[0])[:300])]
+    probes = asyncio.run(env.searcher.probe_many([r["question"] for r in records],
+                                                 cfg.isolation.top_k))
+    assert b_gold[0] in probes[0].hit_ids and a_gold[0] in probes[1].hit_ids
+
+    judge = _Judge()                      # no chunk actually answers the question
+    kept = asyncio.run(run_isolation(cfg, env, judge, records))
+    assert {r["task_id"] for r in kept} == {"syn_a", "syn_b"}
+    assert judge.calls == 2, "the decision must go through the judge, not the id"
+    asyncio.run(env.aclose())
+
+
+def test_isolation_still_drops_a_judged_alternative_path(tmp_path):
+    """Tolerating co-retrieval is not tolerating a shortcut: when the judge says
+    another task's gold does answer this question, the task goes."""
+    from arqg.sid.isolation import run_isolation
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    a_gold, b_gold = ["org_00.txt::0", "org_00.txt::1"], ["org_02.txt::0", "org_02.txt::2"]
+    records = [_iso_rec("syn_a", a_gold, env.corpus.text(b_gold[0])[:300]),
+               _iso_rec("syn_b", b_gold, "нейтральный вопрос про парк?")]
+    kept = asyncio.run(run_isolation(cfg, env, _Judge([b_gold[0]]), records))
+
+    assert "syn_a" not in {r["task_id"] for r in kept}
+    report = json.load(open(cfg.paths.isolation_report, encoding="utf-8"))
+    assert report["excluded"]["other_task_gold"] == 1
+    assert report["gold_overlap"]["tasks_sharing_a_gold_chunk"] == 0
+    asyncio.run(env.aclose())
+
+
+# --------------------------------------------------------------------------- #
 # §2.3 — versioning and marker containment
 # --------------------------------------------------------------------------- #
 def test_injection_is_additive_and_markers_stay_internal(tmp_path):

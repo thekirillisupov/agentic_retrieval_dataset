@@ -67,6 +67,20 @@ individually: `python run_sid.py gates --config …`.
   happens to be a valid alternative path for B, that is exactly the labelling
   hole isolation exists to close, and a check on v0 cannot see it.
 
+**What isolation drops, and what it merely measures.** Two tasks with the *same*
+gold set are one task labelled twice: one survives, chosen by `task_id` so the
+result does not depend on the order the pool arrives in. Everything else in a
+result list that is not this task's gold — another task's gold included — is a
+*candidate* shortcut and goes to the judge; only a verdict that it actually
+yields this answer drops the task. Rejecting on the mere presence of another
+task's gold is a different test: it fires on co-retrieval, which is the normal
+state of affairs once S1 mines within a folder — the better the scoping, the
+more neighbouring tasks retrieve each other — and it fires symmetrically, so
+both members of a pair die instead of one. It also could never see the case it
+was named for, since a gold chunk shared with another task is *this* task's gold
+too and was filtered out before the check ran. `isolation_report.json` now
+carries `gold_overlap`, so how much the pool shares gold stays measured.
+
 ---
 
 ## Where S1 looks: section scopes
