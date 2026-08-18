@@ -26,6 +26,13 @@ class Chunk:
     raw_text: str
     document_id: str = ""   # logical document the passage belongs to
     title: str = ""         # document/passage title (used to enrich embeddings)
+    # Everything else a corpus knows about this chunk but the five fields above
+    # do not carry — a categorical facet (region, customer, ОКПД2 code, ...),
+    # loaded either inline from the corpus record or merged in from a metadata
+    # sidecar keyed by chunk id (see arqg/sid/corpus.py). Never written to the
+    # agent-visible export; SID's S1 reads it to group chunks for mining (see
+    # arqg/sid/scoping.py) and S0 reports what it found (see compat.py).
+    meta: dict[str, Any] = field(default_factory=dict)
 
     @property
     def id(self) -> str:

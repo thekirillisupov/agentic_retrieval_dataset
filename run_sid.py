@@ -49,6 +49,9 @@ def main() -> None:
                    help="override LLM backend for generator AND judge "
                         "(openai|gateway|anthropic|mock); 'mock' also mocks embeddings")
     p.add_argument("--corpus", default=None, help="override the v0 corpus path")
+    p.add_argument("--meta", default=None,
+                   help="override the per-chunk metadata sidecar path (see "
+                        "paths.meta / mining.scope_field in scoping.py)")
     p.add_argument("--out-dir", default=None, help="override the output directory")
     args = p.parse_args()
 
@@ -59,6 +62,8 @@ def main() -> None:
             cfg.embed.backend = "mock"
     if args.corpus:
         cfg.paths.corpus = args.corpus
+    if args.meta:
+        cfg.paths.meta = args.meta
     if args.out_dir:
         cfg.paths.out_dir = args.out_dir
     setup_logging(cfg.log_level)

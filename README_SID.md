@@ -125,6 +125,45 @@ failure that already keeps `document_id` out. A folder is *where to look*, not
 `stats.json` reports `sections.share_root_only`, so the pathology this removes
 stays measured rather than assumed.
 
+### Scoping by any metadata facet, not only the title breadcrumb
+
+`title` is `ckr`'s *only* editorial grouping, but it need not be the only
+grouping S1 knows how to use. `mining.scope_field` names the field a chunk is
+grouped by — a builtin chunk attribute (`title`, `document_id`, `file_name`)
+or a key in `Chunk.meta` — and `mining.scope_strategy` says how a value
+becomes a scope key (see `arqg/sid/scoping.py`):
+
+| `scope_strategy` | how a scope key is built | fits |
+|---|---|---|
+| `"path"` (default) | `/`-separated breadcrumb → its folder, `path_scope_gap` deep (see `sections.py`) | a hierarchical field like `ckr`'s `title` |
+| `"exact"` | the field's value, verbatim | a flat categorical facet: region, customer, ОКПД2 code, law, year, price bucket, … |
+
+`Chunk.meta` is populated one of two ways: `load_chunks` lifts any field
+beyond the pipeline's five core ones straight off the corpus record, or — for
+a corpus that keeps its facets in a separate file, like zakupki's
+`*_meta.jsonl` — point `paths.meta` (or `run_sid.py --meta`) at it and
+`SidCorpus.load` merges it in by `chunk_id`. Either way, `python run_sid.py
+compat` reports every facet it found under `index_fields.yaml`'s
+`meta_fields`, with coverage and cardinality, so picking a scope is reading a
+report rather than guessing:
+
+```bash
+python scripts/build_zakupki_corpus.py merge --input data/zakupki/dumps/*.csv:auto \
+    --name zakupki_all --out-dir data/zakupki
+python run_sid.py compat --config config_sid.yaml \
+    --corpus data/zakupki/zakupki_all.jsonl --meta data/zakupki/zakupki_all_meta.jsonl \
+    --out-dir out_sid_zakupki
+# inspect out_sid_zakupki/index_fields.yaml -> meta_fields, then set in the config:
+#   mining.scope_field: region        # or customer / okpd2_code / law / year / price_bucket
+#   mining.scope_strategy: exact
+python run_sid.py all --config config_sid.yaml \
+    --corpus data/zakupki/zakupki_all.jsonl --meta data/zakupki/zakupki_all_meta.jsonl \
+    --out-dir out_sid_zakupki
+```
+
+An existing config that never set these two keys mines exactly as before —
+the defaults are `scope_field: title`, `scope_strategy: path`.
+
 ### Where the entity bridge runs out: the doc2doc channel
 
 Scoping fixes *where* to look; it does not help with folders where the entity

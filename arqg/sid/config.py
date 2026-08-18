@@ -32,13 +32,27 @@ class MiningConfig:
     require_cross_document: bool = False
     seed: int = 11
 
-    # ---- section scoping (see sections.py) -------------------------------- #
-    # Mine within a folder of the `title` breadcrumb instead of over the whole
-    # corpus. `None` disables scoping and restores the plain global search;
-    # chunks whose title is too shallow to scope fall back to it either way.
-    # 0 = immediate parent folder (siblings), 1 = one level up (cousins).
+    # ---- scope selection (see scoping.py) ---------------------------------- #
+    # Mine within a *scope* — a group of chunks sharing one field's value —
+    # instead of over the whole corpus. `scope_field` names the field: a
+    # builtin chunk attribute (`title`, `document_id`, `file_name`) or a key in
+    # `Chunk.meta` that the corpus's metadata sidecar carries (see S0's
+    # `index_fields.yaml` -> `meta_fields` for what is actually available).
+    # `scope_strategy` says how a value becomes a scope key: `"path"` reads it
+    # as a `/`-separated breadcrumb and groups by folder (the original
+    # title-scoping behaviour, and the default — an existing config keeps
+    # mining exactly as before); `"exact"` groups chunks sharing the value
+    # verbatim, the right shape for a flat categorical facet (zakupki's
+    # `region`, `customer`, `okpd2_code`, `law`, `year`, ...) that is not a
+    # path at all.
+    scope_field: str = "title"
+    scope_strategy: str = "path"          # "path" | "exact"
+    # `"path"`-only: `None` disables scoping and restores the plain global
+    # search; chunks whose value is too shallow to scope fall back to it
+    # either way. 0 = immediate parent folder (siblings), 1 = one level up
+    # (cousins). Ignored by `"exact"`, which has no notion of depth.
     path_scope_gap: int | None = 1
-    min_scope_depth: int = 2              # a 1–2 segment scope is a whole domain
+    min_scope_depth: int = 2              # "path" only: a 1–2 segment scope is a whole domain
     min_scope_chunks: int = 2
     # An entity in more than this fraction of the scope's chunks is the folder's
     # *subject*, not a bridge between two of its documents ("Эквайринг" inside
@@ -196,6 +210,12 @@ class ExportConfig:
 @dataclass
 class SidPaths:
     corpus: str = "data/chunks.jsonl"     # v0 corpus
+    # Optional per-chunk metadata sidecar, one record per chunk keyed by
+    # `chunk_id`, merged into `Chunk.meta` at load time (see corpus.py). Empty
+    # = no sidecar; a corpus that inlines extra fields on the record itself
+    # needs none — `load_chunks` already keeps those on `.meta`. zakupki's
+    # `build_zakupki_corpus.py merge` writes exactly this shape.
+    meta: str = ""
     out_dir: str = "out_sid"
 
     def _p(self, name: str) -> str:

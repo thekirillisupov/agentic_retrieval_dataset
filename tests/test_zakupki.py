@@ -613,3 +613,34 @@ def test_every_downloadable_profile_names_the_file_it_extracts():
         assert profile.member.endswith((".csv", ".xlsx")), name
         assert profile.download_url.startswith("https://"), name
         assert profile.licence, name
+
+
+def test_materialise_download_keeps_direct_xlsx(tmp_path):
+    """HF serves an .xlsx; OpenXML is a zip but the bytes ARE the dump."""
+    from scripts.build_zakupki_corpus import materialise_download
+
+    archive = tmp_path / "hf.download"
+    target = tmp_path / "tenders_farmcom_info.xlsx"
+    # Minimal OpenXML-shaped zip: zipfile-true, no nested dump member.
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("xl/worksheets/sheet1.xml", "<worksheet/>")
+        zf.writestr("[Content_Types].xml", "<Types/>")
+    payload = archive.read_bytes()
+
+    materialise_download(str(archive), str(target), target.name, str(tmp_path))
+    assert target.read_bytes() == payload
+    assert not archive.exists()
+
+
+def test_materialise_download_extracts_zip_member(tmp_path):
+    from scripts.build_zakupki_corpus import materialise_download
+
+    archive = tmp_path / "kaggle.download"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("tender_data.csv", "a,b\n1,2\n")
+    target = tmp_path / "tender_data.csv"
+
+    materialise_download(str(archive), str(target), "tender_data.csv",
+                         str(tmp_path))
+    assert target.read_text() == "a,b\n1,2\n"
+    assert not archive.exists()

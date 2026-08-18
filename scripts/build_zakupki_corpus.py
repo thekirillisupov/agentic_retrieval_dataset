@@ -276,6 +276,31 @@ def cmd_from_table(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 # dumps
 # --------------------------------------------------------------------------- #
+def materialise_download(archive: str, target: str, member: str,
+                         out_dir: str) -> None:
+    """Turn a fetched blob into ``target``.
+
+    Kaggle serves a zip whose member is the dump; Hugging Face serves the
+    ``.xlsx`` itself. Office Open XML is a zip too, so ``is_zipfile`` alone is
+    not enough — only extract when the named member is actually inside.
+    """
+    import zipfile
+
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as zf:
+            names = zf.namelist()
+            if member in names:
+                zf.extract(member, out_dir)
+                os.remove(archive)
+                return
+            if member.endswith((".xlsx", ".xlsm")):
+                os.replace(archive, target)
+                return
+        raise FileNotFoundError(
+            f"{member} not found in archive (has {', '.join(names[:6])})")
+    os.replace(archive, target)
+
+
 def cmd_dumps(args: argparse.Namespace) -> int:
     """Download the published dumps, so `merge` is reproducible from nothing.
 
@@ -284,7 +309,6 @@ def cmd_dumps(args: argparse.Namespace) -> int:
     run resumes rather than re-fetching 150 MB.
     """
     import httpx
-    import zipfile
 
     os.makedirs(args.out_dir, exist_ok=True)
     wanted = args.profiles or [n for n, p in PROFILES.items() if p.download_url]
@@ -318,17 +342,12 @@ def cmd_dumps(args: argparse.Namespace) -> int:
             failed.append(name)
             continue
 
-        if zipfile.is_zipfile(archive):
-            with zipfile.ZipFile(archive) as zf:
-                if profile.member not in zf.namelist():
-                    log.error("zakupki: %s not found in the %s archive (has %s)",
-                              profile.member, name, ", ".join(zf.namelist()[:6]))
-                    failed.append(name)
-                    continue
-                zf.extract(profile.member, args.out_dir)
-            os.remove(archive)
-        else:
-            os.replace(archive, target)
+        try:
+            materialise_download(archive, target, profile.member, args.out_dir)
+        except FileNotFoundError as e:
+            log.error("zakupki: %s: %s", name, e)
+            failed.append(name)
+            continue
         log.info("zakupki: %s -> %s (%.1f MB)", name, target,
                  os.path.getsize(target) / 1e6)
         ready.append((name, target))

@@ -182,6 +182,78 @@ def test_flat_titles_fall_back_to_the_unscoped_search(tmp_path):
     assert all(s.path_scope == "" for s in subgraphs)
 
 
+def test_chunk_scope_of_dispatches_path_and_exact_strategies():
+    """`scoping.py` is the layer above `sections.py`: it picks which field a
+    chunk is grouped by (a builtin attribute or a `meta` key) and how a value
+    becomes a scope key. `"path"` delegates to the breadcrumb mechanics
+    unchanged; `"exact"` groups a flat categorical facet by its literal value."""
+    from arqg.sid.scoping import scope_of as chunk_scope_of
+
+    c = Chunk(file_name="d.txt", index=0, raw_text="x",
+             title="A/B/C/Документ", meta={"region": "77", "empty": ""})
+    assert chunk_scope_of(c, "title", "path", gap=0) == "A/B/C"
+    assert chunk_scope_of(c, "region", "exact") == "77"
+    assert chunk_scope_of(c, "empty", "exact") == ""
+    assert chunk_scope_of(c, "missing_field", "exact") == ""
+    with pytest.raises(ValueError):
+        chunk_scope_of(c, "title", "no_such_strategy")
+
+
+def test_group_by_scope_can_key_on_a_meta_field_instead_of_title(tmp_path):
+    """The same grouping mechanism S1 uses for the title breadcrumb, pointed
+    instead at an arbitrary `Chunk.meta` facet (e.g. zakupki's `region`)."""
+    from arqg.sid.subgraphs import _group_by_scope
+
+    cfg = _cfg(tmp_path)
+    cfg.mining.scope_field = "region"
+    cfg.mining.scope_strategy = "exact"
+    chunks = [Chunk(file_name=f"d{i}.txt", index=0, raw_text=f"x{i}",
+                    meta={"region": "77" if i < 3 else "78"}) for i in range(5)]
+    corpus = SidCorpus(chunks)
+    scoped, residue = _group_by_scope(corpus, {c.id for c in chunks}, cfg.mining)
+    assert scoped == {"77": [c.id for c in chunks[:3]],
+                      "78": [c.id for c in chunks[3:]]}
+    assert residue == []
+
+
+def test_group_by_scope_sends_chunks_missing_the_field_to_the_residue(tmp_path):
+    from arqg.sid.subgraphs import _group_by_scope
+
+    cfg = _cfg(tmp_path)
+    cfg.mining.scope_field = "region"
+    cfg.mining.scope_strategy = "exact"
+    chunks = [Chunk(file_name=f"d{i}.txt", index=0, raw_text=f"x{i}",
+                    meta={"region": "77"} if i < 2 else {}) for i in range(3)]
+    corpus = SidCorpus(chunks)
+    scoped, residue = _group_by_scope(corpus, {c.id for c in chunks}, cfg.mining)
+    assert set(scoped.get("77", [])) == {chunks[0].id, chunks[1].id}
+    assert residue == [chunks[2].id]
+
+
+def test_mining_scopes_by_an_exact_meta_field_not_only_by_title(tmp_path):
+    """A corpus with no breadcrumb `title` at all can still scope S1's search —
+    on any meta facet, grouped by exact value rather than by folder. Two
+    regions, each carrying its own bridging entity; a subgraph must not mix
+    chunks from both."""
+    cfg = _cfg(tmp_path)
+    cfg.mining.scope_field = "region"
+    cfg.mining.scope_strategy = "exact"
+    chunks = []
+    for i in range(4):
+        region = "77" if i < 2 else "78"
+        mark = "«Тритон-9»" if region == "77" else "«Альфа-1»"
+        chunks.append(Chunk(file_name=f"d{i}.txt", index=0,
+                            raw_text=_filler(f"Документ {i}.") + f" Изделие {mark} прошло приёмку.",
+                            meta={"region": region}))
+    corpus = SidCorpus(chunks)
+    subgraphs = mine_subgraphs(cfg, corpus)
+    assert subgraphs, "an exact-match facet must be usable as a scope"
+    for s in subgraphs:
+        regions = {corpus.get(cid).meta.get("region") for cid in s.chunks}
+        assert len(regions) == 1, "an exact-strategy scope must not mix values"
+        assert s.path_scope in ("77", "78")
+
+
 def test_scope_bridge_rejects_the_folders_own_subject(tmp_path):
     """Inside a folder, discrimination is local: an entity in most of the
     folder's chunks is what the folder is *about*, not a bridge between two of
@@ -660,6 +732,60 @@ def test_mock_dispatches_on_the_prompt_tag():
                            "Предприятие занималось ремонтом навигационного оборудования.", 3))
     assert out["facts"] and all("verbatim_span" in f for f in out["facts"])
     assert sid_mock_handler(SOLVE_SYS, "x")["solvable"] is True
+
+
+def test_load_chunks_lifts_extra_record_fields_into_meta(tmp_path):
+    """A corpus that inlines facets on the record itself (rather than keeping
+    them in a separate sidecar) needs no extra step — anything beyond the five
+    core fields lands on `Chunk.meta` for free."""
+    from arqg.data import load_chunks
+
+    path = tmp_path / "inline.jsonl"
+    path.write_text(json.dumps({"file_name": "d.txt", "index": 0, "raw_text": "x",
+                                "region": "77", "price_bucket": "small"},
+                               ensure_ascii=False) + "\n", encoding="utf-8")
+    chunks = load_chunks(str(path))
+    assert len(chunks) == 1
+    assert chunks[0].meta == {"region": "77", "price_bucket": "small"}
+
+
+def test_corpus_load_merges_a_metadata_sidecar_by_chunk_id(tmp_path):
+    """zakupki's `merge` keeps the corpus file to the five core fields and
+    publishes everything else in a separate `*_meta.jsonl` keyed by
+    `chunk_id` — `SidCorpus.load(..., meta_path=...)` folds it back on."""
+    corpus_path = tmp_path / "corpus.jsonl"
+    meta_path = tmp_path / "corpus_meta.jsonl"
+    corpus_path.write_text(
+        "\n".join(json.dumps({"file_name": "d.txt", "index": i, "raw_text": f"x{i}"},
+                             ensure_ascii=False) for i in range(2)) + "\n",
+        encoding="utf-8")
+    meta_path.write_text(
+        json.dumps({"chunk_id": "d.txt::0", "region": "77", "customer": "ООО Ромашка"},
+                  ensure_ascii=False) + "\n",
+        encoding="utf-8")
+
+    corpus = SidCorpus.load(str(corpus_path), meta_path=str(meta_path))
+    assert corpus.get("d.txt::0").meta == {"region": "77", "customer": "ООО Ромашка"}
+    assert corpus.get("d.txt::1").meta == {}, "a chunk absent from the sidecar stays untouched"
+
+
+def test_index_fields_reports_meta_facets_and_the_configured_scope(tmp_path):
+    """S0's compat report is what a corpus operator reads to pick a scope: the
+    facets an index actually carries, their coverage and cardinality, and
+    which one `mining.scope_field`/`scope_strategy` currently points at."""
+    from arqg.sid.compat import build_index_fields
+
+    chunks = [Chunk(file_name=f"d{i}.txt", index=0, raw_text="x",
+                    meta={"region": "77" if i < 2 else "78"}) for i in range(3)]
+    corpus = SidCorpus(chunks)
+    cfg = SidConfig()
+    cfg.mining.scope_field = "region"
+    cfg.mining.scope_strategy = "exact"
+
+    fields = build_index_fields(corpus, cfg)
+    assert fields["meta_fields"]["region"] == {"coverage": 1.0, "n_distinct": 2}
+    assert fields["scope"] == {"field": "region", "strategy": "exact",
+                               "source": "meta_fields"}
 
 
 def test_compat_report_and_manifest(tmp_path):

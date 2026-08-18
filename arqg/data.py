@@ -13,11 +13,17 @@ from .utils import log
 _LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
 _CYRILLIC_RE = re.compile(r"[Ѐ-ӿ]")
 
+#: The pipeline's canonical five fields; anything else on a record is a
+#: metadata facet and lands in ``Chunk.meta`` instead (see ``schema.Chunk``).
+_CORE_FIELDS = {"file_name", "index", "raw_text", "document_id", "title"}
+
 
 def load_chunks(path: str) -> list[Chunk]:
     """Load chunks from a .jsonl file, a .json array, or a directory of either.
 
-    Expected record shape: {"file_name", "index", "raw_text"}.
+    Expected record shape: {"file_name", "index", "raw_text"}. Any additional
+    keys on a record (a corpus that inlines its facets rather than keeping
+    them in a separate sidecar) are kept on ``Chunk.meta``.
     """
     chunks: list[Chunk] = []
     if os.path.isdir(path):
@@ -34,6 +40,7 @@ def load_chunks(path: str) -> list[Chunk]:
                     raw_text=rec["raw_text"] if rec["raw_text"] is not None else "",
                     document_id=str(rec.get("document_id", "") or ""),
                     title=str(rec.get("title", "") or ""),
+                    meta={k: v for k, v in rec.items() if k not in _CORE_FIELDS},
                 )
             )
         except (KeyError, TypeError, ValueError) as e:

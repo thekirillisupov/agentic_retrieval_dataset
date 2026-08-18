@@ -28,6 +28,26 @@ def content_hash(text: str) -> str:
     return hashlib.sha1(norm.encode("utf-8")).hexdigest()
 
 
+def load_meta_sidecar(path: str) -> dict[str, dict[str, Any]]:
+    """``chunk_id -> facets`` from a metadata sidecar.
+
+    Some corpora keep their facets on the chunk record itself (``load_chunks``
+    already lifts anything beyond the five core fields onto ``Chunk.meta``);
+    others — zakupki's ``merge`` output, for instance — keep the corpus file
+    to exactly those five fields and publish everything else in a *separate*
+    ``*_meta.jsonl``, one record per chunk, addressed by ``chunk_id``. This
+    reads that file so `SidCorpus.load` can fold it back onto the chunks.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for rec in read_jsonl(path):
+        cid = rec.get("chunk_id")
+        if not cid:
+            continue
+        out[cid] = {k: v for k, v in rec.items()
+                    if k not in ("chunk_id", "file_name", "index")}
+    return out
+
+
 @dataclass
 class InjectionRecord:
     chunk_id: str
@@ -57,8 +77,19 @@ class SidCorpus:
 
     # ---- construction ---------------------------------------------------- #
     @classmethod
-    def load(cls, path: str, version: str = "v0") -> "SidCorpus":
-        return cls(load_chunks(path), version=version)
+    def load(cls, path: str, version: str = "v0", meta_path: str = "") -> "SidCorpus":
+        chunks = load_chunks(path)
+        if meta_path:
+            sidecar = load_meta_sidecar(meta_path)
+            n = 0
+            for c in chunks:
+                extra = sidecar.get(c.id)
+                if extra:
+                    c.meta.update(extra)
+                    n += 1
+            log.info("corpus: merged metadata for %d/%d chunks from %s",
+                     n, len(chunks), meta_path)
+        return cls(chunks, version=version)
 
     def _register(self, c: Chunk) -> bool:
         if c.id in self._by_id:
@@ -170,7 +201,7 @@ class SidCorpus:
 
 def load_corpus(cfg, *, with_injections: bool = False) -> SidCorpus:
     """Load v0 and, when asked, replay the injected delta on top of it."""
-    corpus = SidCorpus.load(cfg.paths.corpus, version="v0")
+    corpus = SidCorpus.load(cfg.paths.corpus, version="v0", meta_path=cfg.paths.meta)
     if not with_injections:
         return corpus
     inj_path = cfg.paths.injected_corpus

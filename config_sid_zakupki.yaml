@@ -10,8 +10,8 @@ taxonomy_version: v0.8
 log_level: INFO
 
 paths:
-  corpus: data/chunks.jsonl        # v0 index: {"file_name","index","raw_text",...}
-  meta: ""                         # optional per-chunk metadata sidecar (chunk_id-keyed
+  corpus: data/zakupki/zakupki_small.jsonl        # v0 index: {"file_name","index","raw_text",...}
+  meta: "data/zakupki/zakupki_small_meta.jsonl"                         # optional per-chunk metadata sidecar (chunk_id-keyed
                                     # JSONL); merged into Chunk.meta, see mining.scope_field
   out_dir: out_sid
 
@@ -19,35 +19,47 @@ paths:
 # Models. Generator and judge may differ — a stronger judge reduces self-bias.
 # ---------------------------------------------------------------------------
 llm:
-  backend: openai                  # openai | gateway | anthropic | mock
-  base_url: http://localhost:8000/v1
-  model: Qwen/Qwen2.5-72B-Instruct
-  api_key_env: OPENAI_API_KEY
-  temperature: 0.6                 # composition wants variety
+  backend: gateway
+  base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+  cert_file: gigachat/published.pem
+  key_file: gigachat/00CA0001CLLMllm99usr.key
+  verify_ssl: false
+  temperature: 0.7                 # composition wants variety
   max_tokens: 1536
-  max_concurrency: 16
+  max_concurrency: 4
+  extra_body:
+    top_p: 0.90
+    reasoning: false
+    chat_template_kwargs:
+      enable_thinking: false
 
 judge:
-  backend: openai
-  base_url: http://localhost:8000/v1
-  model: Qwen/Qwen2.5-72B-Instruct
-  api_key_env: OPENAI_API_KEY
-  temperature: 0.0                 # judging wants determinism
-  max_tokens: 800
-  max_concurrency: 16
+  backend: gateway
+  base_url: https://sm.apps.dev-terra000003-ids.ocp.delta.sbrf.ru/qwen_35
+  cert_file: gigachat/published.pem
+  key_file: gigachat/00CA0001CLLMllm99usr.key
+  verify_ssl: false
+  temperature: 0.1                 # judging wants determinism
+  max_tokens: 1024
+  max_concurrency: 4
+  extra_body:
+    reasoning: false
+    chat_template_kwargs:
+      enable_thinking: false
 
 # Dense branch of the hybrid retriever. This must be the SAME embedder the agent
 # uses at rollout time — the gates measure against this environment.
 embed:
   backend: gigachat                # gigachat | mock
   model: GigaEmbeddings-3B-2025-09
-  base_url: https://gigachat.devices.sberbank.ru/api/v1/embeddings
-  token_env: GIGACHAT_TOKEN
-  auth_key_env: GIGACHAT_AUTH_KEY
-  verify_ssl: true
-  ca_bundle: ""
-  batch_size: 32
-  max_concurrency: 8
+  base_url: https://gigachat-ift.sberdevices.delta.sbrf.ru/v1/embeddings
+  cert_file: gigachat/published.pem
+  key_file: gigachat/00CA0001CLLMllm99usr.key
+  verify_ssl: false
+  batch_size: 16
+  max_input_chars: 7000
+  max_concurrency: 2
+  min_request_interval: 0.0
 
 rrf_k: 60                          # RRF constant of the hybrid fusion
 fusion_candidates: 100             # per-branch depth before fusion
@@ -79,14 +91,26 @@ mining:
   # a `/`-separated breadcrumb and groups by folder (this corpus's `title`);
   # `exact` groups chunks sharing the value verbatim — the shape for a flat
   # categorical facet (zakupki's region/customer/okpd2_code/...).
-  scope_field: title
-  scope_strategy: path             # path | exact
+  scope_field: region
+  scope_strategy: exact             # path | exact
   path_scope_gap: 1                # "path" only: 0 = same folder, 1 = one level up, null = off
   scope_df_ratio: 0.5              # above this share of a folder = its subject
   max_subgraphs_per_path: 8
   max_bridge_type_share: 0.5
   same_doc_min_chunks: 20          # same-document pairs need a navigable document
   min_index_gap: 8                 # ... and a real gap between the chunks
+
+  # Second bridge channel. The entity channel reaches 283 of this corpus's 800
+  # folders; in 451 of the other 517 no surface form repeats at all, so they are
+  # invisible to exact matching rather than filtered out by a threshold. Pairs
+  # in the band 0.50-0.90 exist in 601 folders. See arqg/sid/simbridge.py.
+  sim_bridge: true
+  sim_bridge_low_percentile: 95    # p95 ~ 0.51 here: related above background
+  # Measured on the first run: with the partner inside the top-3 neighbours
+  # G_BROAD passed 0.22 of the time and 0.13 became tasks, against 0.55 / 0.30
+  # beyond rank 50 — one query already returns both, which is a trivial task.
+  sim_bridge_exclude_top_k: 3
+  sim_bridge_max_pairs_per_scope: 8
 
 # --- S2 --------------------------------------------------------------------
 taxonomy:

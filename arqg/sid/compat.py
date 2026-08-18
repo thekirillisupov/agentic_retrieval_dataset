@@ -14,11 +14,13 @@ from __future__ import annotations
 import json
 import random
 import statistics as st
+from collections import Counter, defaultdict
 from typing import Any
 
 from ..utils import ensure_parent, log
 from .config import SidConfig
 from .corpus import SidCorpus
+from .scoping import BUILTIN_FIELDS
 from .sections import depth as section_depth, scope_of
 
 _SENT_END = ".!?…»\"'"
@@ -71,7 +73,29 @@ def build_compat_report(cfg: SidConfig, corpus: SidCorpus, sample: int = 200) ->
     return report
 
 
-def build_index_fields(corpus: SidCorpus) -> dict[str, Any]:
+def _meta_fields_report(corpus: SidCorpus) -> dict[str, Any]:
+    """§2.2, generalised — every facet in ``Chunk.meta``, coverage and
+    cardinality, so a config can point ``mining.scope_field`` at whichever one
+    actually groups the corpus (see scoping.py). Populated either by
+    `load_chunks` (facets inlined on the corpus record) or by a metadata
+    sidecar merged in at load time (``paths.meta``, see corpus.py)."""
+    n = max(1, len(corpus))
+    coverage: Counter = Counter()
+    cardinality: dict[str, set[str]] = defaultdict(set)
+    for c in corpus.all_chunks():
+        for k, v in c.meta.items():
+            if v in (None, "", [], {}):
+                continue
+            coverage[k] += 1
+            if isinstance(v, (str, int, float)):
+                cardinality[k].add(str(v))
+    return {
+        k: {"coverage": round(coverage[k] / n, 4), "n_distinct": len(cardinality[k])}
+        for k in sorted(coverage)
+    }
+
+
+def build_index_fields(corpus: SidCorpus, cfg: SidConfig | None = None) -> dict[str, Any]:
     """§2.2 — what the miner and search filters may key on."""
     has_doc_id = sum(1 for c in corpus.all_chunks() if c.document_id)
     titled = [c.title for c in corpus.all_chunks() if c.title]
@@ -80,7 +104,9 @@ def build_index_fields(corpus: SidCorpus) -> dict[str, Any]:
     depths = sorted(section_depth(t) for t in breadcrumbs)
     scopes = {scope_of(t, gap=1) for t in breadcrumbs}
     scopes.discard("")
-    return {
+    meta_fields = _meta_fields_report(corpus)
+
+    fields: dict[str, Any] = {
         "chunk_id": {"format": "{file_name}::{index}", "coverage": 1.0},
         "file_name": {"role": "document handle / doc_type proxy", "coverage": 1.0},
         "index": {"role": "position in document; same-document distance",
@@ -94,27 +120,48 @@ def build_index_fields(corpus: SidCorpus) -> dict[str, Any]:
             "median_depth": depths[len(depths) // 2] if depths else 0,
             "n_scopes_at_gap_1": len(scopes),
         },
-        "notes": [
-            "date / ACL / doc_type tags are not present in this corpus; "
-            "temporal_resolution therefore relies on dates extracted from text.",
-            ("title is a path, not a headline: it is the section anchor S1 scopes "
-             "on (see sections.py). It is NOT registered as an entity-graph tag — "
-             "that would bypass tau_idf and make every folder sibling a bridge."
-             if breadcrumbs else
-             "title is a flat name, not a path: S1 falls back to the unscoped "
-             "global entity search."),
-        ],
     }
+    if meta_fields:
+        # Everything else the index carries — a categorical facet from a
+        # metadata sidecar, or extra keys inlined on the corpus record.
+        fields["meta_fields"] = meta_fields
+    if cfg is not None:
+        fields["scope"] = {
+            "field": cfg.mining.scope_field, "strategy": cfg.mining.scope_strategy,
+            "source": "builtin chunk field" if cfg.mining.scope_field in BUILTIN_FIELDS
+                      else "meta_fields" if cfg.mining.scope_field in meta_fields
+                      else "not found on this corpus",
+        }
+
+    notes = [
+        "date / ACL / doc_type tags are not present in this corpus; "
+        "temporal_resolution therefore relies on dates extracted from text.",
+        ("title is a path, not a headline: it is the section anchor S1 scopes "
+         "on by default (mining.scope_field=title, scope_strategy=path — see "
+         "scoping.py). It is NOT registered as an entity-graph tag — that "
+         "would bypass tau_idf and make every folder sibling a bridge."
+         if breadcrumbs else
+         "title is a flat name, not a path: with the default scope_field/"
+         "scope_strategy S1 falls back to the unscoped global entity search."),
+    ]
+    if meta_fields:
+        notes.append(
+            "additional per-chunk facets are available (see meta_fields above) — "
+            "point mining.scope_field at one of them with scope_strategy=exact "
+            "to mine within chunks that share its value verbatim (a categorical "
+            "facet, not a path), instead of the title breadcrumb.")
+    fields["notes"] = notes
+    return fields
 
 
 def run_compat(cfg: SidConfig) -> dict[str, Any]:
-    corpus = SidCorpus.load(cfg.paths.corpus, version="v0")
+    corpus = SidCorpus.load(cfg.paths.corpus, version="v0", meta_path=cfg.paths.meta)
     report = build_compat_report(cfg, corpus)
     ensure_parent(cfg.paths.compat_report)
     with open(cfg.paths.compat_report, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
-    fields = build_index_fields(corpus)
+    fields = build_index_fields(corpus, cfg)
     ensure_parent(cfg.paths.index_fields)
     try:
         import yaml

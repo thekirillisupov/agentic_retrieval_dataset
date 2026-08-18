@@ -13,10 +13,18 @@ Neighbourhood density is *measured* later (§7.1) and never filters here.
 Run over the whole corpus, "rare entity shared by two chunks" is satisfied by
 coincidence far more often than by subject matter: on `ckr` half the subgraphs
 mined that way shared nothing but the corpus root, bridged by словоформы like
-«Перестал» or «Сторону». So the search is confined to a *section scope* built
-from the `title` breadcrumb (see `sections.py`), and the entity's job narrows to
-what it is actually good at — picking which two documents of that folder belong
-in one question.
+«Перестал» or «Сторону». So the search is confined to a *scope* — chunks
+sharing one value of `mining.scope_field` under `mining.scope_strategy` (see
+`scoping.py`) — and the entity's job narrows to what it is actually good at —
+picking which two documents of that scope belong in one question.
+
+`ckr`'s scope is the `title` breadcrumb's folder (`scope_field="title"`,
+`scope_strategy="path"`, the default), because that corpus's only editorial
+grouping is the path a document was filed under. A corpus whose facets are
+categorical rather than hierarchical — zakupki's `region`, `customer`,
+`okpd2_code`, `law` — groups by exact value instead (`scope_strategy="exact"`);
+S0's `index_fields.yaml` reports what a given corpus's `meta_fields` actually
+offer, coverage and cardinality included, to help pick one.
 
 That reframing forces a second change. Global τ_idf is the wrong floor inside a
 scope: an entity rare enough to clear it (df ≈ 2) lands twice in the same folder
@@ -49,7 +57,8 @@ from .corpus import SidCorpus, load_corpus
 from .dense import DenseIndex
 from .entities import EntityGraph, corpus_lowercase_vocab
 from .schema import Subgraph, sid_hash
-from .sections import scope_of, shared_depth
+from .scoping import scope_of as chunk_scope_of
+from .sections import shared_depth
 from .simbridge import CoRetrievability, SimBand, fit_band, scope_pairs
 
 
@@ -263,22 +272,25 @@ class _Pool:
 # --------------------------------------------------------------------------- #
 def _group_by_scope(corpus: SidCorpus, eligible: set[str],
                     m: MiningConfig) -> tuple[dict[str, list[str]], list[str]]:
-    """Split eligible chunks into section scopes plus a residue.
+    """Split eligible chunks into scopes (grouped by ``m.scope_field`` under
+    ``m.scope_strategy``, see scoping.py) plus a residue.
 
-    A chunk lands in the residue when its title is too shallow to name a folder
-    (`scope_of` returns "") or when its folder holds too few eligible chunks to
-    mine. The residue is mined globally, so a corpus with flat titles behaves
-    exactly as it did before scoping existed.
+    A chunk lands in the residue when its scope value does not scope (e.g. a
+    `"path"` field too shallow to name a folder, or an empty value) or when its
+    scope holds too few eligible chunks to mine. The residue is mined
+    globally, so a corpus lacking the configured field behaves exactly as it
+    did before scoping existed.
     """
-    if m.path_scope_gap is None:
+    if m.scope_strategy == "path" and m.path_scope_gap is None:
         return {}, sorted(eligible)
 
     scoped: dict[str, list[str]] = defaultdict(list)
     residue: list[str] = []
     for cid in sorted(eligible):
         c = corpus.get(cid)
-        scope = scope_of(c.title if c else "", gap=m.path_scope_gap,
-                         min_depth=m.min_scope_depth)
+        scope = chunk_scope_of(c, m.scope_field, m.scope_strategy,
+                               gap=m.path_scope_gap if m.path_scope_gap is not None else 1,
+                               min_depth=m.min_scope_depth) if c else ""
         if scope:
             scoped[scope].append(cid)
         else:
@@ -287,8 +299,9 @@ def _group_by_scope(corpus: SidCorpus, eligible: set[str],
     too_small = {s for s, cids in scoped.items() if len(cids) < m.min_scope_chunks}
     for s in too_small:
         residue.extend(scoped.pop(s))
-    log.info("S1: %d section scopes over %d chunks (+%d unscoped)",
-             len(scoped), sum(len(v) for v in scoped.values()), len(residue))
+    log.info("S1: %d scopes (%s/%s) over %d chunks (+%d unscoped)",
+             len(scoped), m.scope_field, m.scope_strategy,
+             sum(len(v) for v in scoped.values()), len(residue))
     return dict(scoped), sorted(residue)
 
 
@@ -426,7 +439,7 @@ def _mine_scoped(pool: _Pool, scopes: dict[str, list[str]], tau_idf: float,
                 break
         if not progressed:
             break
-    log.info("S1: %d subgraphs from section scopes", len(pool.out) - before)
+    log.info("S1: %d subgraphs from scopes", len(pool.out) - before)
 
 
 def _mine_global(pool: _Pool, cids: list[str], tau_idf: float,
