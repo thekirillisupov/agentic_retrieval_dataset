@@ -60,6 +60,21 @@ filters:
   min_alpha_ratio: 0.5
   min_cyrillic_ratio: 0.3
 
+# --- Facets (arqg/sid/scoping.py: facet_header, arqg/sid/env.py: passage_text)
+# Per-chunk metadata that is *surfaced* rather than only grouped on: rendered
+# into the passage both index branches hold, and shown to the LLM that extracts
+# facts and composes questions. Empty = off, which is right for a corpus whose
+# identity is already in its text and its title. Point it at the keys
+# index_fields.yaml reports under `meta_fields` when it is not (zakupki:
+# region / customer / okpd2_code / ...) — and keep `in_passage` on whenever
+# `in_prompts` is, or the composer names attributes nothing is indexed under.
+facets:
+  fields: []
+  in_passage: true
+  in_prompts: true
+  labels: {}
+  max_value_chars: 120
+
 # --- S1 --------------------------------------------------------------------
 mining:
   idf_percentile: 75               # τ_idf — start of the plan's calibration

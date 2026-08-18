@@ -20,7 +20,7 @@ from .density import (DensityModel, annotate_density, fit_density_model,
 from .distractors import reach_recheck, run_distractors
 from .env import build_env
 from .export import run_export
-from .facts import attach_sections, extract_facts, load_facts
+from .facts import attach_context, extract_facts, load_facts
 from .gates import run_gates, run_minimize
 from .isolation import run_isolation
 from .mockllm import make_sid_client
@@ -35,8 +35,10 @@ def _subgraphs(cfg: SidConfig) -> list[dict]:
 
 
 async def stage_facts(cfg: SidConfig) -> dict[str, list[dict]]:
-    from .corpus import SidCorpus
-    corpus = SidCorpus.load(cfg.paths.corpus)
+    from .corpus import load_corpus
+    # with the metadata sidecar: the facet header the prompts and the index
+    # share is built from `Chunk.meta`, which only `load_corpus` merges in.
+    corpus = load_corpus(cfg)
     chunk_ids = [c for s in _subgraphs(cfg) for c in s["chunks"]]
     llm = make_sid_client(cfg.llm)
     try:
@@ -46,13 +48,13 @@ async def stage_facts(cfg: SidConfig) -> dict[str, list[dict]]:
 
 
 async def stage_compose(cfg: SidConfig) -> list[dict]:
-    from .corpus import SidCorpus
+    from .corpus import load_corpus
     facts = {cid: rows for cid, rows in load_facts(cfg.paths.facts).items()}
     facts = {cid: [f for f in rows if f.get("fact_id")] for cid, rows in facts.items()}
     # `compose` can be run on its own against a facts cache written before
-    # sections existed, so the breadcrumbs are filled in here too, not only in
+    # sections (or facets) existed, so both are filled in here too, not only in
     # the stage that extracts them.
-    attach_sections(SidCorpus.load(cfg.paths.corpus), facts)
+    attach_context(cfg, load_corpus(cfg), facts)
     llm = make_sid_client(cfg.llm)
     try:
         cands = await compose_candidates(cfg, llm, _subgraphs(cfg), facts)

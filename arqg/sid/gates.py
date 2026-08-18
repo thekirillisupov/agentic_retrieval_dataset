@@ -30,6 +30,7 @@ from .env import Env
 from .prompts import (ENTAIL_SYS, SOLVE_DEVIL_SYS, SOLVE_SYS, entail_user,
                       solve_user)
 from .retrieval import aggregate_gaps, aggregate_gaps_over_groups, gap_bin
+from .scoping import facet_header
 from .schema import Candidate, sid_hash
 
 GATE_ORDER = ["G_BROAD", "G_REACH", "G_SOLVE", "G_MIN", "G_REP"]
@@ -264,6 +265,15 @@ async def g_min(cfg: SidConfig, judge: BaseLLM, question: str, answer: str,
 # --------------------------------------------------------------------------- #
 # G_REP — fact groups
 # --------------------------------------------------------------------------- #
+def _facets_of(cfg: SidConfig, env: Env, chunk_id: str) -> str:
+    """The candidate chunk's facet header, as the prompts elsewhere show it."""
+    f = cfg.facets
+    c = env.corpus.get(chunk_id)
+    if not (f.fields and f.in_prompts) or c is None:
+        return ""
+    return facet_header(c, f.fields, f.labels, f.max_value_chars)
+
+
 async def g_rep(cfg: SidConfig, judge: BaseLLM, env: Env,
                 facts: list[dict]) -> list[list[str]]:
     """Every chunk that states a surviving fact joins its group. Collapsing a
@@ -289,7 +299,9 @@ async def g_rep(cfg: SidConfig, judge: BaseLLM, env: Env,
         async def check(cid: str) -> str | None:
             try:
                 v = await judge.complete_json(
-                    ENTAIL_SYS, entail_user(f["fact_normalized"], cid, env.corpus.text(cid)))
+                    ENTAIL_SYS, entail_user(f["fact_normalized"], cid,
+                                            env.corpus.text(cid),
+                                            _facets_of(cfg, env, cid)))
             except Exception:                               # noqa: BLE001
                 return None
             return cid if v.get("states_fact") else None

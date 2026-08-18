@@ -20,7 +20,7 @@ from typing import Any
 from ..utils import ensure_parent, log
 from .config import SidConfig
 from .corpus import SidCorpus
-from .scoping import BUILTIN_FIELDS
+from .scoping import BUILTIN_FIELDS, facet_header
 from .sections import depth as section_depth, scope_of
 
 _SENT_END = ".!?…»\"'"
@@ -132,6 +132,22 @@ def build_index_fields(corpus: SidCorpus, cfg: SidConfig | None = None) -> dict[
                       else "meta_fields" if cfg.mining.scope_field in meta_fields
                       else "not found on this corpus",
         }
+        # Grouping is only one of the two things a facet can do. This says
+        # which ones are *searchable* — rendered into the passage both index
+        # branches hold — and which the LLM sees while writing facts and
+        # questions (see scoping.facet_header, env.passage_text).
+        surfaced = list(cfg.facets.fields)
+        fields["surfaced_facets"] = {
+            "fields": surfaced,
+            "in_passage": bool(surfaced) and cfg.facets.in_passage,
+            "in_prompts": bool(surfaced) and cfg.facets.in_prompts,
+            "missing_on_this_corpus": [f for f in surfaced
+                                       if f not in meta_fields
+                                       and f not in BUILTIN_FIELDS],
+            "example": facet_header(corpus.all_chunks()[0], surfaced,
+                                    cfg.facets.labels, cfg.facets.max_value_chars)
+            if surfaced and len(corpus) else "",
+        }
 
     notes = [
         "date / ACL / doc_type tags are not present in this corpus; "
@@ -150,6 +166,10 @@ def build_index_fields(corpus: SidCorpus, cfg: SidConfig | None = None) -> dict[
             "point mining.scope_field at one of them with scope_strategy=exact "
             "to mine within chunks that share its value verbatim (a categorical "
             "facet, not a path), instead of the title breadcrumb.")
+        notes.append(
+            "a facet only reaches the retriever if `facets.fields` lists it: "
+            "grouping chunks by a field the index cannot see gives the composer "
+            "an attribute to name and the probe nothing to match it against.")
     fields["notes"] = notes
     return fields
 

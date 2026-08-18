@@ -17,6 +17,7 @@ from .config import SidConfig
 from .corpus import SidCorpus
 from .prompts import FACTS_SYS, facts_user
 from .schema import Fact, sid_hash
+from .scoping import facet_header
 
 _WS = re.compile(r"\s+")
 
@@ -48,10 +49,12 @@ async def extract_facts(cfg: SidConfig, llm: BaseLLM, corpus: SidCorpus,
         if not text:
             return
         section = _section_of(corpus, cid)
+        facets = _facets_of(cfg, corpus, cid)
         try:
             obj = await llm.complete_json(
                 FACTS_SYS,
-                facts_user(cid, text, cfg.compose.max_facts_per_chunk, section))
+                facts_user(cid, text, cfg.compose.max_facts_per_chunk, section,
+                           facets))
         except Exception as e:                              # noqa: BLE001
             log.warning("S3a: fact extraction failed for %s: %s", cid, e)
             return
@@ -73,6 +76,7 @@ async def extract_facts(cfg: SidConfig, llm: BaseLLM, corpus: SidCorpus,
                 discriminating_attributes=[
                     str(a) for a in raw.get("discriminating_attributes", [])][:8],
                 section=section,
+                facets=facets,
             )
             if not fact.fact_normalized:
                 continue
@@ -85,7 +89,7 @@ async def extract_facts(cfg: SidConfig, llm: BaseLLM, corpus: SidCorpus,
     await asyncio.gather(*(one(c) for c in todo))
     facts = {cid: [f for f in rows if f.get("fact_id")]
              for cid, rows in load_facts(cfg.paths.facts).items()}
-    attach_sections(corpus, facts)
+    attach_context(cfg, corpus, facts)
     n = sum(len(v) for v in facts.values())
     log.info("S3a: %d facts over %d chunks", n, len([k for k, v in facts.items() if v]))
     return facts
@@ -99,18 +103,37 @@ def _section_of(corpus: SidCorpus, chunk_id: str) -> str:
     return c.title if c else ""
 
 
-def attach_sections(corpus: SidCorpus, facts: dict[str, list[dict]]) -> None:
-    """Fill in `section` on facts that predate the field.
+def _facets_of(cfg: SidConfig, corpus: SidCorpus, chunk_id: str) -> str:
+    """The chunk's facet header for the prompts, or ``""`` when off.
+
+    Rendered by the same function the index renders the passage with, so what
+    the composer may name is what the retriever can find (see scoping.py).
+    """
+    f = cfg.facets
+    c = corpus.get(chunk_id)
+    if not (f.fields and f.in_prompts) or c is None:
+        return ""
+    return facet_header(c, f.fields, f.labels, f.max_value_chars)
+
+
+def attach_context(cfg: SidConfig, corpus: SidCorpus,
+                   facts: dict[str, list[dict]]) -> None:
+    """Fill in `section` and `facets` on facts that predate those fields.
 
     `facts.jsonl` is a cache keyed by chunk_id, so a resume never re-extracts a
-    chunk that was already done — including ones extracted before sections
-    existed. Deriving the field from the corpus on load keeps a resumed run from
-    composing half its questions blind.
+    chunk that was already done — including ones extracted before sections (or
+    facets) existed. Deriving both from the corpus on load keeps a resumed run
+    from composing half its questions blind, and means turning
+    `facets.fields` on does not require throwing the fact cache away: the
+    facets a *composer* sees are refreshed here on every load. Only the facts
+    themselves stay as they were extracted.
     """
     for cid, rows in facts.items():
-        section = ""
+        section = facets = None
         for f in rows:
-            if f.get("section"):
-                continue
-            section = section or _section_of(corpus, cid)
-            f["section"] = section
+            if not f.get("section"):
+                section = _section_of(corpus, cid) if section is None else section
+                f["section"] = section
+            if not f.get("facets"):
+                facets = _facets_of(cfg, corpus, cid) if facets is None else facets
+                f["facets"] = facets

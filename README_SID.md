@@ -178,6 +178,70 @@ python run_sid.py all --config config_sid.yaml \
 An existing config that never set these two keys mines exactly as before —
 the defaults are `scope_field: title`, `scope_strategy: path`.
 
+### Metadata the retriever can see: `facets`
+
+Grouping is only half of what a facet is good for. Until `facets.fields` names
+it, a metadata field reaches exactly two places — the scope key S1 groups on and
+S0's inventory report — and neither the retriever nor any prompt knows it
+exists. On a corpus whose identity lives in its prose (`ckr`) that costs
+nothing. On one where it does not, it is the whole problem: a ЕИС notice is not
+told apart from ten thousand notices of the same template by its wording, but by
+its region, customer and ОКПД2 code.
+
+Left alone, that produced a specific and misleading failure. The dense branch
+embedded `title\ntext` while BM25 indexed `raw_text` — one policy applied to
+half the retriever — and zakupki packs the purchase number, customer, region and
+year into exactly that title (`Facets.title()`). So the fact extractor, which is
+handed the breadcrumb as context, wrote paraphrases naming a customer that
+occurred in no lexical document, and `G_REACH` probed with them: the lexical
+branch spent the query on notices that merely mention the region in prose and
+ranked the gold below them. Worse, the same asymmetry moves `G_BROAD` the *other*
+way — the question misses its own gold, so a trivial task looks non-trivial and
+passes. Two ends of one interval, pushed apart by an indexing detail.
+
+`facets` closes it in one place. `scoping.facet_header` renders the configured
+fields into one line, and that line goes into:
+
+| where | what it changes |
+|---|---|
+| `env.passage_text` → **both** index branches | the facet is searchable; BM25 and dense now hold the identical string |
+| S3a fact extraction (`АТРИБУТЫ:`, alongside `РАЗДЕЛ:`) | a fact can be self-contained about *which* notice it describes |
+| S3b composition and the `G_SOLVE` critic | the composer can point at what separates two near-identical documents |
+| `G_REP` entailment | a judge shown only the body would read a facet-phrased fact as unsupported and shrink the fact group |
+| an injected distractor's passage and vector | it inherits its donor's facets, or it is a chunk of a different shape than every real one and trivially separable |
+
+It is context, never a source: `verbatim_span` is still checked against the
+chunk text alone, exactly as for the breadcrumb.
+
+```yaml
+facets:
+  fields: [region, customer, okpd2_code, law, year, price_bucket]
+  in_passage: true      # BM25 + dense hold the same string
+  in_prompts: true      # facts / compose / G_SOLVE / G_REP see the same header
+  labels: {region: Регион, customer: Заказчик, okpd2_code: ОКПД2}
+```
+
+Empty `fields` is off, and every stage behaves exactly as before. **Keep the two
+switches together.** `in_prompts` without `in_passage` is the one combination
+that is worse than either half — the LLM starts naming attributes no passage
+carries, which lowers `G_REACH` and raises `G_BROAD` at once — so `SidConfig`
+warns when a config asks for it. `index_fields.yaml` reports the surfaced fields
+under `surfaced_facets`, including any that do not exist on the corpus at all.
+
+Three consequences worth knowing. The dense cache key now covers *how* a passage
+is rendered, not only the corpus text, so turning facets on re-embeds instead of
+silently reusing vectors built from a different string. An L2 distractor still
+perturbs an attribute inside the body — its inherited facet header is copied
+verbatim, which is what keeps it a near-miss rather than making it a different
+document. And every similarity the pipeline measures moves, because the header
+is part of what is embedded: chunks sharing a facet are now genuinely more
+alike, which is correct — it is the relation the agent's retriever will see —
+but it lifts §7.1's τ_sim, the doc2doc band and the co-retrievability rank
+together. They are all fitted per run from the same pairwise sample, so the
+re-embedding the cache key forces re-fits them; the numbers in this document
+were measured before facets existed and want re-reading on the first faceted
+run.
+
 ### Where the entity bridge runs out: the doc2doc channel
 
 Scoping fixes *where* to look; it does not help with folders where the entity
@@ -232,7 +296,8 @@ between two such fragments. S3 passes the path as context to both. It is context
 only: `verbatim_span` is still checked against the chunk text alone, so a fact
 lifted from the heading is dropped rather than repaired. Since `embed_with_title`
 is on, the retriever already sees the path, so a question that references a
-section stays reachable for `G_REACH`.
+section stays reachable for `G_REACH`. Facets ride the same channel — see
+`facets` above, which also makes them reachable on the lexical side.
 
 ---
 
