@@ -323,6 +323,21 @@ cascade level and distractor type live in `injection_ledger.jsonl`, which is
 ours. `corpus_injected.jsonl` is the agent-visible delta and carries none of it.
 A leaked marker teaches "synthetic → ignore", which is a shortcut, not a skill.
 
+**An injected chunk is embedded exactly like a v0 one.** With `embed_with_title`
+on, every corpus chunk enters the dense index as `title\ntext`; a distractor
+inherits its donor's title and is embedded the same way, both for the §7.5
+neighbourhood check and for the vector written to the index. Embedded as bare
+text it would sit somewhere other than where a rebuild of v1 from
+`corpus_injected.jsonl` puts it — so "does it land in the gold neighbourhood?"
+would be answered about a vector nothing ever retrieves against.
+
+S6 also **saves the index it mutated** under `index/v1/`, together with the
+injected delta, every `50` tasks and at the end. The dense cache is keyed on the
+corpus checksum, which every injection changes: without that save, S7 — and any
+resumed `distract` — re-embeds the entire corpus for vectors the process is
+already holding, which on a 60k-chunk corpus behind a rate-limited embedder is
+hours of API calls per resume.
+
 ---
 
 ## Where this departs from the plan, and why

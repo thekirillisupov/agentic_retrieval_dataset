@@ -38,6 +38,7 @@ from arqg.sid.sections import scope_of, shared_depth
 from arqg.sid.simbridge import CoRetrievability, SimBand, scope_pairs
 from arqg.sid.subgraphs import (_Admissible, _scope_bridges, build_entity_graph,
                                 mine_subgraphs, run_mining)
+from arqg.embeddings import MockEmbedder
 from arqg.schema import Chunk
 from arqg.utils import read_jsonl
 
@@ -638,6 +639,105 @@ def test_verification_rejects_out_of_neighbourhood_candidates(tmp_path):
     kept = asyncio.run(verify_candidates(cfg, judge, env, rec, [far], model, inj))
     assert kept == [] and inj.rejected["neighborhood"] == 1
     asyncio.run(env.aclose())
+
+
+def test_injected_chunk_is_embedded_the_way_the_index_holds_it(tmp_path):
+    """A distractor is a chunk of this index like any other.
+
+    With `embed_with_title` on, every v0 chunk is embedded as "title\ntext".
+    Embedding a distractor as bare text puts it somewhere else in the space
+    than where it will sit once v1 is rebuilt from disk — so §7.5's
+    "does it land in the gold neighbourhood?" would be measured on a vector
+    nothing ever retrieves against.
+    """
+    from arqg.sid.distractors import _passage, inject
+
+    cfg = _cfg(tmp_path)
+    assert cfg.embed.embed_with_title
+    env = asyncio.run(build_env(cfg, version="v0"))
+    donor = env.corpus.get("org_00.txt::1")
+    assert donor.title, "the fixture must carry a breadcrumb title"
+
+    cand = DistractorCandidate(text="Совсем другой текст про измерения.",
+                               level="L2_perturbed", dtype="near_duplicate",
+                               source_chunk_id=donor.id, title=donor.title)
+    assert _passage(env, cand) == f"{donor.title}\n{cand.text}"
+
+    vecs = asyncio.run(env.embedder.embed([_passage(env, cand)], kind="passage"))
+    rec = {"task_id": "t1", "question": "вопрос?", "answer": "ответ",
+           "gold_chunk_ids": ["org_00.txt::0"]}
+    summary = inject(cfg, env, rec, TaskInjection(task_id="t1", accepted=[cand]), vecs)
+    cid = summary["chunk_ids"][0]
+
+    with_title = asyncio.run(
+        env.embedder.embed([f"{donor.title}\n{cand.text}"], kind="passage"))[0]
+    without = asyncio.run(env.embedder.embed([cand.text], kind="passage"))[0]
+    assert np.allclose(env.dense.vec(cid), with_title)
+    assert not np.allclose(env.dense.vec(cid), without)
+    # and the title the chunk carries is the one that was embedded, so a
+    # rebuild of v1 from corpus_injected.jsonl reproduces the same vector
+    assert env.corpus.get(cid).title == donor.title
+    asyncio.run(env.aclose())
+
+
+def test_generated_distractor_inherits_its_donor_title(tmp_path):
+    from arqg.sid.distractors import _gen_l2
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    gen = make_sid_client(cfg.llm)
+    rec = {"question": "вопрос?", "answer": "ответ",
+           "facts": [{"discriminating_attributes": ["date:2015"]}]}
+    cand = asyncio.run(_gen_l2(gen, env, rec, "org_00.txt::1"))
+    assert cand is not None
+    assert cand.title == env.corpus.get("org_00.txt::1").title
+    asyncio.run(gen.aclose())
+    asyncio.run(env.aclose())
+
+
+def test_v1_index_is_saved_so_the_next_stage_does_not_re_embed(tmp_path):
+    """The dense cache is keyed on the corpus checksum, which every injection
+    changes. If S6 does not save the index it mutated, S7 — and any resumed
+    `distract` — re-embeds the whole corpus for vectors the process was
+    already holding."""
+    import shutil
+
+    from arqg.sid.distractors import save_index
+
+    class CountingEmbedder(MockEmbedder):
+        def __init__(self, cfg):
+            super().__init__(cfg)
+            self.embedded = 0
+
+        async def embed(self, texts, kind):
+            if kind == "passage":
+                self.embedded += len(texts)
+            return await super().embed(texts, kind)
+
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    chunk = env.corpus.inject(donor_file="org_00.txt", text="Текст-дистрактор для t1.",
+                              task_id="t1", level="L2_perturbed",
+                              dtype="near_duplicate", source_chunk_id="org_00.txt::1",
+                              title=env.corpus.get("org_00.txt::1").title)
+    vec = asyncio.run(env.embedder.embed([chunk.raw_text], kind="passage"))
+    env.searcher.add_documents([chunk.id], [chunk.raw_text], vec)
+    save_index(cfg, env)
+    asyncio.run(env.aclose())
+
+    counting = CountingEmbedder(cfg.embed)
+    env2 = asyncio.run(build_env(cfg, version="v1", embedder=counting))
+    assert counting.embedded == 0, "v1 must come from cache, not from the embedder"
+    assert chunk.id in env2.dense.ids and len(env2.corpus) == len(env2.dense.ids)
+    asyncio.run(env2.aclose())
+
+    # without the saved index the same stage pays for the whole corpus again —
+    # that is the regression this guards
+    shutil.rmtree(cfg.paths.dense_dir("v1"))
+    counting2 = CountingEmbedder(cfg.embed)
+    env3 = asyncio.run(build_env(cfg, version="v1", embedder=counting2))
+    assert counting2.embedded == len(env3.corpus)
+    asyncio.run(env3.aclose())
 
 
 # --------------------------------------------------------------------------- #
