@@ -39,7 +39,8 @@ from ..llm import BaseLLM
 from ..utils import append_jsonl, load_done_keys, log, read_jsonl
 from .config import SidConfig
 from .density import DensityModel
-from .env import Env, dense_signature, passage_text
+from .env import (Env, chunk_passage_text, dense_signature, passage_facets,
+                  passage_text)
 from .gates import reach_probe_fields
 from .prompts import (DISTRACTOR_CHECK_SYS, GENERATE_SYS, PERTURB_SYS,
                       TRANSPLANT_SYS, distractor_check_user,
@@ -64,6 +65,9 @@ class DistractorCandidate:
     # candidate rather than looked up at injection time because it is part of
     # what gets embedded — see `_passage(env, candidate)`.
     title: str = ""
+    # ... and its donor's facets, for exactly the same reason: they are part of
+    # the passage now, so they have to be part of the vector that was verified.
+    meta: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -105,17 +109,20 @@ def _pools(env: Env, gold: list[str], model: DensityModel,
     return band_ids, far[: cfg.distractors.l1_pool]
 
 
-def _donor_title(env: Env, chunk_id: str) -> str:
+def _donor_context(env: Env, chunk_id: str) -> tuple[str, dict]:
+    """The title and facets an injected chunk inherits from its donor."""
     c = env.corpus.get(chunk_id)
-    return c.title if c else ""
+    return (c.title, dict(c.meta)) if c else ("", {})
 
 
 def _passage(env: Env, c: DistractorCandidate) -> str:
-    """The candidate as the index will hold it — title included when the rest
-    of the corpus is embedded that way. Both the §7.5 neighbourhood check and
-    the vector actually written to the index go through this, so what was
+    """The candidate as the index will hold it — title and facets included when
+    the rest of the corpus is held that way. Both the §7.5 neighbourhood check
+    and the vector actually written to the index go through this, so what was
     verified is what is retrieved."""
-    return passage_text(c.title, c.text, env.cfg.embed.embed_with_title)
+    donor = env.corpus.get(c.source_chunk_id)
+    facets = passage_facets(donor, env.cfg) if donor else ""
+    return passage_text(c.title, c.text, env.cfg.embed.embed_with_title, facets)
 
 
 # --------------------------------------------------------------------------- #
@@ -135,10 +142,11 @@ async def _gen_l2(llm: BaseLLM, env: Env, rec: dict, source_id: str) -> Distract
     text = str(obj.get("text", "")).strip()
     if not text:
         return None
+    title, meta = _donor_context(env, source_id)
     return DistractorCandidate(
         text=text, level="L2_perturbed",
         dtype=str(obj.get("distractor_type", "near_duplicate")),
-        source_chunk_id=source_id, title=_donor_title(env, source_id),
+        source_chunk_id=source_id, title=title, meta=meta,
         perturbed_attribute=str(obj.get("perturbed_attribute", "")))
 
 
@@ -154,10 +162,11 @@ async def _gen_l1(llm: BaseLLM, env: Env, rec: dict, source_id: str,
     text = str(obj.get("text", "")).strip()
     if not text:
         return None
+    title, meta = _donor_context(env, source_id)
     return DistractorCandidate(
         text=text, level="L1_transplant",
         dtype=str(obj.get("distractor_type", "topical_lure")),
-        source_chunk_id=source_id, title=_donor_title(env, source_id))
+        source_chunk_id=source_id, title=title, meta=meta)
 
 
 async def _gen_l3(llm: BaseLLM, env: Env, rec: dict, template_id: str) -> DistractorCandidate | None:
@@ -171,10 +180,11 @@ async def _gen_l3(llm: BaseLLM, env: Env, rec: dict, template_id: str) -> Distra
     text = str(obj.get("text", "")).strip()
     if not text:
         return None
+    title, meta = _donor_context(env, template_id)
     return DistractorCandidate(
         text=text, level="L3_generated",
         dtype=str(obj.get("distractor_type", "topical_lure")),
-        source_chunk_id=template_id, title=_donor_title(env, template_id))
+        source_chunk_id=template_id, title=title, meta=meta)
 
 
 # --------------------------------------------------------------------------- #
@@ -356,13 +366,17 @@ def inject(cfg: SidConfig, env: Env, rec: dict, inj: TaskInjection,
             text=c.text, task_id=rec["task_id"], level=c.level, dtype=c.dtype,
             source_chunk_id=c.source_chunk_id,
             document_id=donor.document_id if donor else "",
-            title=c.title,
+            title=c.title, meta=c.meta,
             perturbed_attribute=c.perturbed_attribute,
             sim_to_gold=round(c.sim_to_gold, 4), version=version)
         if chunk is None:
             continue
         added_ids.append(chunk.id)
-        added_texts.append(chunk.raw_text)
+        # the lexical branch gets the same string the dense one was given
+        # (`_passage` above), not the bare body: a distractor indexed without
+        # the title/facet header is findable by different queries than the
+        # gold it is meant to shadow.
+        added_texts.append(chunk_passage_text(chunk, cfg))
         added_vecs.append(v)
         levels[c.level] = levels.get(c.level, 0) + 1
         types[c.dtype] = types.get(c.dtype, 0) + 1

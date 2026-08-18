@@ -72,6 +72,38 @@ filters:
   min_alpha_ratio: 0.5
   min_cyrillic_ratio: 0.3
 
+# --- Facets (arqg/sid/scoping.py: facet_header, arqg/sid/env.py: passage_text)
+# Which per-chunk metadata is *surfaced*, and where. `meta_fields` in
+# index_fields.yaml (after `run_sid.py compat`) lists what this corpus carries.
+#
+# Why it matters here more than anywhere: a ЕИС notice is not distinguished from
+# ten thousand notices of the same template by its prose — it is distinguished
+# by its region, customer and ОКПД2 code. Without them in the passage a fact
+# paraphrased with the customer's name cannot retrieve its own chunk, so G_REACH
+# rejects a task the environment could actually serve; without them in the
+# prompts the composer writes questions that fit any notice at all.
+#
+# Keep the two switches together. Prompts-only is the harmful half (the composer
+# names attributes no passage carries) — `SidConfig` warns about it.
+facets:
+  fields:                          # rendered in this order
+    - region
+    - customer
+    - okpd2_code
+    - law
+    - year
+    - price_bucket
+  in_passage: true                 # BM25 + dense hold the same string
+  in_prompts: true                 # facts / compose / G_SOLVE / G_REP see it
+  labels:                          # header labels; the key itself is the default
+    region: Регион
+    customer: Заказчик
+    okpd2_code: ОКПД2
+    law: Закон
+    year: Год
+    price_bucket: НМЦК
+  max_value_chars: 120             # a customer's full legal name is long
+
 # --- S1 --------------------------------------------------------------------
 mining:
   idf_percentile: 75               # τ_idf — start of the plan's calibration

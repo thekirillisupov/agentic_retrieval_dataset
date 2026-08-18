@@ -19,13 +19,21 @@ def _chunks_block(chunks: list[tuple[str, str]]) -> str:
 
 
 def _facts_block(facts: list[dict[str, Any]]) -> str:
-    """Facts with the section each one came from.
+    """Facts with the section — and the facets — each one came from.
 
     Without the breadcrumb the composer sees two fragments and no reason to
     believe they are about the same product — this corpus is largely markdown
     tables whose subject lives in the document title, not in the cells. Given
     it, "same folder" is visible and the composed link is grounded instead of
     guessed.
+
+    `facets` is the same header the index holds the chunk under (see
+    `scoping.facet_header`), attached to the fact in `facts.attach_context`.
+    A corpus whose chunks are told apart by metadata rather than by prose —
+    one procurement notice against ten thousand notices of the same template —
+    gives the composer nothing to build a question on until it can see them.
+    Because it is the *indexed* header, what the question can name is what the
+    retriever can find, which is the property G_REACH measures.
     """
     out = []
     for f in facts:
@@ -33,6 +41,8 @@ def _facts_block(facts: list[dict[str, Any]]) -> str:
                 f"\n  цитата: «{f['verbatim_span']}»")
         if f.get("section"):
             line += f"\n  раздел: {breadcrumb(f['section'])}"
+        if f.get("facets"):
+            line += f"\n  атрибуты: {f['facets']}"
         out.append(line)
     return "\n".join(out)
 
@@ -54,14 +64,23 @@ FACTS_SYS = (TAG % "facts") + """
   подразделе идёт речь, и нужен, чтобы fact_normalized был самодостаточен
   (например «дефект СберБизнеса», а не просто «дефект»). Но РАЗДЕЛ — не источник
   фактов: verbatim_span обязан быть подстрокой ФРАГМЕНТА, не заголовка.
+- АТРИБУТЫ — карточка фрагмента в базе (регион, заказчик, код, год). Они
+  отличают этот фрагмент от тысяч однотипных, поэтому используй их так же, как
+  РАЗДЕЛ: чтобы fact_normalized был самодостаточен и указывал на конкретный
+  документ. Источником фактов они тоже не являются — verbatim_span берётся
+  только из ФРАГМЕНТА.
 
 Ответ — строго JSON: {"facts": [{"verbatim_span": "...", "fact_normalized": "...",
 "entities": ["..."], "discriminating_attributes": ["date:...", "org:..."]}]}
 """
 
 
-def facts_user(chunk_id: str, text: str, max_facts: int, section: str = "") -> str:
-    head = f"РАЗДЕЛ: {breadcrumb(section)}\n\n" if section else ""
+def facts_user(chunk_id: str, text: str, max_facts: int, section: str = "",
+               facets: str = "") -> str:
+    head = f"РАЗДЕЛ: {breadcrumb(section)}\n" if section else ""
+    head += f"АТРИБУТЫ: {facets}\n" if facets else ""
+    if head:
+        head += "\n"
     return (f"{head}Фрагмент [CHUNK {chunk_id}]:\n{text}\n\n"
             f"Извлеки до {max_facts} самых информативных атомарных фактов.")
 
@@ -85,6 +104,13 @@ COMPOSE_SYS = (TAG % "compose") + """
 У фактов указан «раздел» — путь фрагмента в базе знаний. Он показывает, к какому
 продукту и подразделу относится факт: используй его, чтобы понять, о чём вообще
 идут фрагменты, и чтобы вопрос был самодостаточен.
+
+У фактов могут быть указаны «атрибуты» — карточка фрагмента в базе (регион,
+заказчик, код, год). Это то, чем документ отличается от тысяч однотипных, и
+поиск индексирует их вместе с текстом. Опирайся на них, чтобы вопрос указывал на
+конкретные документы, а не на любой похожий. Требования 3 и 4 действуют и здесь:
+не называй атрибут, который агент обязан найти сам, и не копируй формулировку
+дословно.
 
 Ответ — строго JSON: {"question": "...", "answer": "...",
 "used_fact_ids": ["f_..."], "reasoning": "..."}
@@ -154,8 +180,16 @@ ENTAIL_SYS = (TAG % "entail") + """
 """
 
 
-def entail_user(fact: str, chunk_id: str, text: str) -> str:
-    return f"ФАКТ: {fact}\n\n[CHUNK {chunk_id}]\n{text}"
+def entail_user(fact: str, chunk_id: str, text: str, facets: str = "") -> str:
+    """The judge sees the chunk as the index holds it.
+
+    G_REP asks whether a chunk states a fact. Once facts may be phrased with
+    the facets — "закупка в Татарстане …" — a judge shown only the body reads
+    the region as unsupported and rejects a chunk that does state the fact,
+    which silently shrinks the fact groups NDCG is scored against.
+    """
+    head = f"АТРИБУТЫ: {facets}\n" if facets else ""
+    return f"ФАКТ: {fact}\n\n[CHUNK {chunk_id}]\n{head}{text}"
 
 
 # --------------------------------------------------------------------------- #

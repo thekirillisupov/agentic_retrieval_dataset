@@ -1198,3 +1198,224 @@ def test_resume_is_idempotent(tmp_path):
     assert len(list(read_jsonl(cfg.paths.tasks))) == n1
     for p, n in counts.items():
         assert len(list(read_jsonl(p))) == n, f"{p} duplicated on resume"
+
+
+# --------------------------------------------------------------------------- #
+# Facets — surfaced, not only grouped on
+# --------------------------------------------------------------------------- #
+def _faceted_corpus(tmp_path) -> tuple[SidConfig, str]:
+    """A corpus whose chunks are told apart by metadata, not by prose.
+
+    Two notices of the same template: the bodies differ only in a sum, and what
+    actually separates them — region, customer — lives in the sidecar. This is
+    the zakupki shape in miniature.
+    """
+    body = ("Извещение о проведении электронного аукциона. Начальная цена "
+            "контракта составляет {sum} рублей. Заявки подаются в электронной "
+            "форме через оператора площадки в установленный срок.")
+    corpus_path = tmp_path / "corpus.jsonl"
+    corpus_path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in [
+        {"file_name": "n1.txt", "index": 0, "raw_text": body.format(sum="1 200 000"),
+         "document_id": "n1", "title": "Закупка № 111"},
+        {"file_name": "n2.txt", "index": 0, "raw_text": body.format(sum="3 400 000"),
+         "document_id": "n2", "title": "Закупка № 222"},
+    ]) + "\n", encoding="utf-8")
+    meta_path = tmp_path / "meta.jsonl"
+    meta_path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in [
+        {"chunk_id": "n1.txt::0", "region": "Республика Татарстан",
+         "customer": "ГБУЗ Больница №7", "datasets": ["eis", "contracts"]},
+        {"chunk_id": "n2.txt::0", "region": "Москва", "customer": "ГБУ Автодорога"},
+    ]) + "\n", encoding="utf-8")
+
+    cfg = _cfg(tmp_path)
+    cfg.paths.corpus = str(corpus_path)
+    cfg.paths.meta = str(meta_path)
+    cfg.facets.fields = ["region", "customer"]
+    cfg.facets.labels = {"region": "Регион", "customer": "Заказчик"}
+    return cfg, str(corpus_path)
+
+
+def test_facet_header_renders_labels_lists_and_truncates():
+    from arqg.sid.scoping import facet_header
+
+    c = Chunk(file_name="d.txt", index=0, raw_text="x", title="T",
+              meta={"region": "Москва", "empty": "", "customer": "О" * 200,
+                    "datasets": ["eis", "contracts"]})
+    assert facet_header(c, ["region"], {"region": "Регион"}) == "Регион: Москва"
+    # a field the chunk does not carry renders nothing rather than an empty pair
+    assert facet_header(c, ["region", "empty", "missing"]) == "region: Москва"
+    assert facet_header(c, ["datasets"]) == "datasets: eis, contracts"
+    long = facet_header(c, ["customer"], max_value_chars=10)
+    assert long == "customer: " + "О" * 10 + "…"
+    assert facet_header(c, []) == "" and facet_header(c, ["missing"]) == ""
+
+
+def test_both_index_branches_hold_the_same_faceted_passage(tmp_path):
+    """The point of the whole change: a facet is searchable, in BOTH branches.
+
+    BM25 used to index `raw_text` while the dense side embedded `title\ntext`,
+    which is not two policies but one policy applied to half the retriever. Now
+    they share `passage_text`, so a query naming a facet — the only thing that
+    separates these two notices — finds the right one instead of ranking by the
+    boilerplate they have in common.
+    """
+    from arqg.sid.env import chunk_passage_text
+
+    cfg, _ = _faceted_corpus(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    chunk = env.corpus.get("n1.txt::0")
+    passage = chunk_passage_text(chunk, cfg)
+    assert passage.startswith("Закупка № 111\nРегион: Республика Татарстан | "
+                              "Заказчик: ГБУЗ Больница №7\n")
+
+    hits = env.bm25.search("Республика Татарстан больница", 5)
+    assert hits and hits[0][0] == "n1.txt::0", "the lexical branch can see the facet"
+    probe = asyncio.run(env.searcher.probe("закупка Республика Татарстан", 2))
+    assert probe.hit_ids[0] == "n1.txt::0"
+    asyncio.run(env.aclose())
+
+
+def test_facets_off_leaves_the_passage_exactly_as_it_was(tmp_path):
+    from arqg.sid.env import chunk_passage_text
+
+    cfg, _ = _faceted_corpus(tmp_path)
+    cfg.facets.fields = []
+    corpus = SidCorpus.load(cfg.paths.corpus, meta_path=cfg.paths.meta)
+    c = corpus.get("n1.txt::0")
+    assert chunk_passage_text(c, cfg) == f"{c.title}\n{c.raw_text}"
+    cfg.embed.embed_with_title = False
+    assert chunk_passage_text(c, cfg) == c.raw_text
+
+
+def test_dense_cache_key_covers_how_a_passage_is_rendered(tmp_path):
+    """The checksum covers the corpus text, not the string built from it. Without
+    the rendering in the signature, turning facets on reuses vectors embedded
+    without them and every later measurement is taken against an index that does
+    not match the config describing it."""
+    from arqg.sid.env import dense_signature
+
+    cfg, _ = _faceted_corpus(tmp_path)
+    corpus = SidCorpus.load(cfg.paths.corpus, meta_path=cfg.paths.meta)
+    base = dense_signature(cfg, corpus, "v0")
+
+    cfg.facets.fields = ["region"]
+    assert dense_signature(cfg, corpus, "v0") != base
+    cfg.facets.fields = ["region", "customer"]
+    cfg.facets.in_passage = False
+    assert dense_signature(cfg, corpus, "v0") != base
+    cfg.facets.in_passage = True
+    cfg.embed.embed_with_title = False
+    assert dense_signature(cfg, corpus, "v0") != base
+
+
+def test_every_prompt_sees_the_same_facet_header(tmp_path):
+    """Extraction, composition, the G_SOLVE critic and the G_REP judge all read
+    one header — the one the index holds the chunk under."""
+    from arqg.sid.facts import _facets_of
+    from arqg.sid.prompts import entail_user
+
+    cfg, _ = _faceted_corpus(tmp_path)
+    corpus = SidCorpus.load(cfg.paths.corpus, meta_path=cfg.paths.meta)
+    header = _facets_of(cfg, corpus, "n1.txt::0")
+    assert header == "Регион: Республика Татарстан | Заказчик: ГБУЗ Больница №7"
+
+    assert f"АТРИБУТЫ: {header}" in facts_user("n1.txt::0", "текст", 4, "", header)
+    assert f"АТРИБУТЫ: {header}" in entail_user("факт", "n1.txt::0", "текст", header)
+    block = _facts_block([{"fact_id": "f_1", "chunk_id": "n1.txt::0",
+                           "fact_normalized": "факт", "verbatim_span": "цитата",
+                           "facets": header}])
+    assert f"атрибуты: {header}" in block
+
+    cfg.facets.in_prompts = False
+    assert _facets_of(cfg, corpus, "n1.txt::0") == ""
+
+
+def test_a_fact_without_facets_renders_no_attribute_line():
+    block = _facts_block([{"fact_id": "f_1", "chunk_id": "a::0",
+                           "fact_normalized": "факт", "verbatim_span": "цитата"}])
+    assert "атрибуты:" not in block
+
+
+def test_attach_context_backfills_facets_onto_a_cache_that_predates_them(tmp_path):
+    """`facts.jsonl` is a chunk-keyed cache, so turning facets on must not mean
+    re-extracting it: the header is a *view* of the chunk, refreshed on load,
+    while the extracted facts stay as they were."""
+    from arqg.sid.facts import attach_context
+
+    cfg, _ = _faceted_corpus(tmp_path)
+    corpus = SidCorpus.load(cfg.paths.corpus, meta_path=cfg.paths.meta)
+    facts = {"n1.txt::0": [{"fact_id": "f_1", "chunk_id": "n1.txt::0",
+                            "fact_normalized": "старый факт", "verbatim_span": "х"}]}
+    attach_context(cfg, corpus, facts)
+    row = facts["n1.txt::0"][0]
+    assert row["facets"].startswith("Регион: Республика Татарстан")
+    assert row["section"] == "Закупка № 111"
+    assert row["fact_normalized"] == "старый факт"
+
+
+def test_injected_distractor_inherits_the_donor_facets(tmp_path):
+    """A distractor without the header is a chunk of a different shape than
+    every real one — trivially separable, and no longer the near-miss §7.5
+    verified. It inherits its donor's facets in the corpus, in the vector and
+    in the lexical index, and keeps them when v1 is replayed from disk."""
+    from arqg.sid.distractors import _passage, inject
+    from arqg.sid.env import chunk_passage_text
+
+    cfg, _ = _faceted_corpus(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    donor = env.corpus.get("n1.txt::0")
+    cand = DistractorCandidate(text="Извещение с изменённой суммой 9 900 000 рублей.",
+                               level="L2_perturbed", dtype="near_duplicate",
+                               source_chunk_id=donor.id, title=donor.title,
+                               meta=dict(donor.meta))
+    assert _passage(env, cand) == (f"{donor.title}\nРегион: Республика Татарстан | "
+                                   f"Заказчик: ГБУЗ Больница №7\n{cand.text}")
+
+    vecs = asyncio.run(env.embedder.embed([_passage(env, cand)], kind="passage"))
+    rec = {"task_id": "t1", "question": "вопрос?", "answer": "ответ",
+           "gold_chunk_ids": ["n2.txt::0"]}
+    summary = inject(cfg, env, rec, TaskInjection(task_id="t1", accepted=[cand]), vecs)
+    cid = summary["chunk_ids"][0]
+    injected = env.corpus.get(cid)
+    assert injected.meta == donor.meta
+    # the lexical branch holds it under the same string the dense branch embedded
+    assert env.bm25.search("Республика Татарстан 9 900 000", 3)[0][0] == cid
+    assert chunk_passage_text(injected, cfg) == _passage(env, cand)
+
+    # ... and the delta replays into v1 with the facets intact
+    env.corpus.export_public(cfg.paths.injected_corpus, only_injected=True)
+    env.corpus.save_ledger(cfg.paths.injection_ledger)
+    from arqg.sid.corpus import load_corpus
+    v1 = load_corpus(cfg, with_injections=True)
+    assert v1.get(cid).meta == donor.meta
+    asyncio.run(env.aclose())
+
+
+def test_index_fields_reports_which_facets_are_searchable(tmp_path):
+    """S0 already lists what a corpus carries; it now also says which of those
+    reach the retriever and the prompts, and names a field that does not exist
+    on this corpus rather than silently rendering nothing."""
+    from arqg.sid.compat import build_index_fields
+
+    chunks = [Chunk(file_name="d.txt", index=0, raw_text="x",
+                    meta={"region": "Москва"})]
+    cfg = SidConfig()
+    cfg.facets.fields = ["region", "okpd2_code"]
+    cfg.facets.labels = {"region": "Регион"}
+    fields = build_index_fields(SidCorpus(chunks), cfg)
+    assert fields["surfaced_facets"] == {
+        "fields": ["region", "okpd2_code"], "in_passage": True, "in_prompts": True,
+        "missing_on_this_corpus": ["okpd2_code"], "example": "Регион: Москва"}
+
+
+def test_prompts_without_the_index_is_warned_about(caplog):
+    """The one combination that is worse than either half: the composer names
+    attributes no passage carries, so G_REACH falls and G_BROAD passes for the
+    wrong reason."""
+    with caplog.at_level("WARNING"):
+        SidConfig.from_dict({"facets": {"fields": ["region"], "in_passage": False}})
+    assert "in_passage" in caplog.text
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        SidConfig.from_dict({"facets": {"fields": ["region"]}})
+    assert caplog.text == ""

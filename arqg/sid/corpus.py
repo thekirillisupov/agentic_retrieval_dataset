@@ -140,14 +140,23 @@ class SidCorpus:
 
     def inject(self, *, donor_file: str, text: str, task_id: str, level: str,
                dtype: str, source_chunk_id: str, document_id: str = "",
-               title: str = "", perturbed_attribute: str = "",
+               title: str = "", meta: dict[str, Any] | None = None,
+               perturbed_attribute: str = "",
                sim_to_gold: float = 0.0, version: str = "v1") -> Chunk | None:
         """Append a distractor to the corpus. Returns None on a content-hash
-        duplicate (§7.5 p.3)."""
+        duplicate (§7.5 p.3).
+
+        `meta` is the donor's, for the same reason `title` is: once facets are
+        rendered into the passage (see env.passage_text), a distractor without
+        them is a chunk of a different shape than every real one — trivially
+        separable by the retriever, and no longer the near-miss it was verified
+        to be.
+        """
         if self.has_duplicate_text(text):
             return None
         c = Chunk(file_name=donor_file, index=self.next_index(donor_file),
-                  raw_text=text, document_id=document_id, title=title)
+                  raw_text=text, document_id=document_id, title=title,
+                  meta=dict(meta or {}))
         if not self._register(c):
             return None
         self.ledger[c.id] = InjectionRecord(
@@ -158,12 +167,22 @@ class SidCorpus:
 
     # ---- persistence ----------------------------------------------------- #
     def export_public(self, path: str, only_injected: bool = False) -> int:
-        """Agent-visible view: no synthetic markers anywhere."""
+        """Agent-visible view: no synthetic markers anywhere.
+
+        Facets ride along when the chunk has any. They are corpus metadata, not
+        a marker — every v0 chunk carries them and an injected one inherits its
+        donor's — and the delta is replayed to rebuild the v1 index, which now
+        renders them into the passage. Dropping them here would hand a resumed
+        run distractors that embed differently than they did when injected.
+        """
         def rows() -> Iterable[dict[str, Any]]:
             for cid, c in self._by_id.items():
                 if only_injected and cid not in self.ledger:
                     continue
-                yield {k: getattr(c, k) for k in PUBLIC_FIELDS}
+                row = {k: getattr(c, k) for k in PUBLIC_FIELDS}
+                if c.meta:
+                    row["meta"] = c.meta
+                yield row
         return write_jsonl(path, rows())
 
     def save_ledger(self, path: str) -> int:
@@ -212,7 +231,8 @@ def load_corpus(cfg, *, with_injections: bool = False) -> SidCorpus:
     for rec in read_jsonl(inj_path):
         c = Chunk(file_name=rec["file_name"], index=int(rec["index"]),
                   raw_text=rec.get("raw_text", ""),
-                  document_id=rec.get("document_id", ""), title=rec.get("title", ""))
+                  document_id=rec.get("document_id", ""), title=rec.get("title", ""),
+                  meta=dict(rec.get("meta") or {}))
         if corpus._register(c):
             added += 1
     corpus.load_ledger(cfg.paths.injection_ledger)

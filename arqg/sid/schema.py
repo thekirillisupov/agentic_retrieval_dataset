@@ -61,6 +61,11 @@ class Fact:
     # gate repair → task), so the composer and the repair loop get the section
     # without every one of them having to hold the corpus.
     section: str = ""
+    # ... and its facet header, for the same reason. Refreshed from the corpus
+    # on every load (see facts.attach_context), because unlike the fact itself
+    # it is a *view* of the chunk: turning `facets.fields` on must not require
+    # re-extracting a cache that is already correct.
+    facets: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

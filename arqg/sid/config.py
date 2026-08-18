@@ -13,6 +13,55 @@ from ..config import FilterConfig, LLMConfig, RetrieveConfig, _merge_dataclass
 
 
 @dataclass
+class FacetConfig:
+    """Which per-chunk facets are *surfaced*, and where (see scoping.py).
+
+    `Chunk.meta` used to reach exactly two places: the scope key S1 groups on
+    and S0's inventory report. Everything else in the pipeline — both branches
+    of the retriever and every prompt — was blind to it, which is a problem the
+    moment a corpus's identity lives in its facets rather than in its prose. A
+    zakupki notice is distinguished from ten thousand near-identical ones by
+    its region, customer and ОКПД2 code; if the index cannot see them, a fact
+    paraphrased with them cannot retrieve its own chunk (G_REACH), and if the
+    composer cannot see them it writes questions the environment cannot answer.
+
+    The two switches are deliberately separate but meant to move together.
+    `in_prompts` without `in_passage` is the harmful combination: the LLM
+    starts phrasing facts and questions with facet vocabulary that exists in no
+    indexed text, which makes G_REACH strictly worse and lets G_BROAD pass for
+    the wrong reason — the query misses the gold because part of it addresses
+    nothing at all. `run_sid.py` warns when a config asks for that.
+
+    Empty `fields` = the whole feature is off and every stage behaves exactly
+    as it did before, which is what corpora whose facets are already in the
+    title or the text (ckr) want.
+    """
+    #: Facet keys to surface, in the order they are rendered. A builtin chunk
+    #: attribute (title/document_id/file_name) is accepted too, though the
+    #: title has its own switch in `embed.embed_with_title`. See S0's
+    #: `index_fields.yaml` -> `meta_fields` for what a corpus actually carries.
+    fields: list[str] = field(default_factory=list)
+    #: Render them into the passage BOTH index branches hold (dense + BM25).
+    in_passage: bool = True
+    #: Show them to the LLM: fact extraction, composition, the G_SOLVE critic
+    #: and the G_REP entailment judge all see the same header.
+    in_prompts: bool = True
+    #: Human labels for the header, `{field: label}`; the key itself is used
+    #: when absent (`region: Регион`, `okpd2_code: ОКПД2`).
+    labels: dict[str, str] = field(default_factory=dict)
+    #: Long free-text facets (a customer's full legal name) are truncated, so
+    #: one verbose field cannot outweigh the passage it is supposed to label.
+    max_value_chars: int = 120
+
+    def signature(self) -> dict[str, Any]:
+        """What changes the rendered passage — folded into the dense cache key
+        so editing this block re-embeds instead of silently reusing vectors
+        built from a different string."""
+        return {"fields": list(self.fields), "in_passage": self.in_passage,
+                "labels": dict(self.labels), "max_value_chars": self.max_value_chars}
+
+
+@dataclass
 class MiningConfig:
     """S1 — entity ↔ chunk bipartite mining (plan §3)."""
     # entity is "niche enough": idf above this percentile of the corpus idf
@@ -322,6 +371,7 @@ class SidConfig:
     judge: LLMConfig = field(default_factory=lambda: LLMConfig(temperature=0.0))
     embed: RetrieveConfig = field(default_factory=RetrieveConfig)
     filters: FilterConfig = field(default_factory=FilterConfig)
+    facets: FacetConfig = field(default_factory=FacetConfig)
 
     mining: MiningConfig = field(default_factory=MiningConfig)
     taxonomy: TaxonomyConfig = field(default_factory=TaxonomyConfig)
@@ -356,6 +406,7 @@ class SidConfig:
             else:
                 setattr(cfg, f.name, val)
         cfg._resolve_secrets()
+        cfg._warn_on_facet_asymmetry()
         return cfg
 
     @classmethod
@@ -366,6 +417,27 @@ class SidConfig:
             with open(path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
         return cls.from_dict(data)
+
+    def _warn_on_facet_asymmetry(self) -> None:
+        """Facets in the prompts but not in the index is the one combination
+        that makes things worse rather than differently good.
+
+        The LLM starts phrasing facts and questions with facet vocabulary; the
+        retriever holds passages in which that vocabulary does not occur. So
+        G_REACH falls (the paraphrase probes tokens no document has) *and*
+        G_BROAD rises (the question misses the gold for the same reason and
+        looks non-trivial), which moves both ends of the interval §6 measures
+        and makes the funnel unreadable. Not fatal, so not an error — a
+        deliberate ablation is a legitimate reason to run it.
+        """
+        from ..utils import log
+        f = self.facets
+        if f.fields and f.in_prompts and not f.in_passage:
+            log.warning(
+                "facets: %d field(s) go to the prompts but not into the index "
+                "(facets.in_passage=false). The composer will name attributes "
+                "no passage carries — expect G_REACH to fall and G_BROAD to "
+                "pass for the wrong reason.", len(f.fields))
 
     def _resolve_secrets(self) -> None:
         for llm in (self.llm, self.judge):

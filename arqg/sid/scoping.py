@@ -39,10 +39,18 @@ BUILTIN_FIELDS = ("title", "document_id", "file_name")
 
 
 def field_value(chunk: Chunk, field: str) -> str:
-    """Raw value of ``field`` for ``chunk``, whichever side of it lives on."""
+    """Raw value of ``field`` for ``chunk``, whichever side of it lives on.
+
+    A list-valued facet is joined rather than stringified: a sidecar that
+    carries ``datasets: ["eis", "contracts"]`` should read as text both when it
+    labels a passage and when it keys a scope, not as ``['eis', 'contracts']``.
+    """
     if field in BUILTIN_FIELDS:
         return getattr(chunk, field, "") or ""
-    return str(chunk.meta.get(field, "") or "")
+    value = chunk.meta.get(field)
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value if v not in (None, ""))
+    return str(value or "")
 
 
 def scope_of(chunk: Chunk, field: str, strategy: str, *,
@@ -60,3 +68,33 @@ def scope_of(chunk: Chunk, field: str, strategy: str, *,
         return value.strip()
     raise ValueError(
         f"unknown mining.scope_strategy: {strategy!r} (expected one of {STRATEGIES})")
+
+
+# --------------------------------------------------------------------------- #
+# surfacing facets — one header, three consumers
+# --------------------------------------------------------------------------- #
+def facet_header(chunk: Chunk, fields: list[str] | tuple[str, ...],
+                 labels: dict[str, str] | None = None,
+                 max_value_chars: int = 120) -> str:
+    """One line naming ``chunk``'s facets, or ``""`` when it has none of them.
+
+    Deliberately the *only* place this string is built. It goes into the
+    passage both index branches hold, into the prompts that extract facts and
+    compose questions, and into the vector an injected distractor is embedded
+    as — and the whole point is defeated the moment two of those disagree: a
+    chunk retrieved as one string and judged as another is measured in an
+    environment nobody runs.
+
+    Not a source of facts. `verbatim_span` is checked against the chunk text
+    alone (see facts.py), exactly as it is for the breadcrumb.
+    """
+    labels = labels or {}
+    parts: list[str] = []
+    for field in fields:
+        value = " ".join(field_value(chunk, field).split())
+        if not value:
+            continue
+        if max_value_chars > 0 and len(value) > max_value_chars:
+            value = value[:max_value_chars].rstrip() + "…"
+        parts.append(f"{labels.get(field, field)}: {value}")
+    return " | ".join(parts)
