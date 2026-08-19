@@ -9,9 +9,10 @@ language: ru
 taxonomy_version: v0.8
 log_level: INFO
 
+# _CORE_FIELDS = {"file_name", "index", "raw_text", "document_id", "title"}
 paths:
-  corpus: data/zakupki/zakupki_small.jsonl        # v0 index: {"file_name","index","raw_text",...}
-  meta: "data/zakupki/zakupki_small_meta.jsonl"                         # optional per-chunk metadata sidecar (chunk_id-keyed
+  corpus: data/zakupki/zakupki_tiny.jsonl        # v0 index: {"file_name","index","raw_text",...}
+  meta: "data/zakupki/zakupki_tiny_meta.jsonl"                         # optional per-chunk metadata sidecar (chunk_id-keyed
                                     # JSONL); merged into Chunk.meta, see mining.scope_field
   out_dir: out_sid
 
@@ -91,8 +92,11 @@ facets:
     - customer
     - okpd2_code
     - law
+    - procedure                    # способ: аукцион / конкурс / … (empty on most XML chunks)
     - year
     - price_bucket
+    - section                      # which part of the notice; the only field that varies per chunk
+    - winner                       # sparse (~2%); facet_header skips empty values
   in_passage: true                 # BM25 + dense hold the same string
   in_prompts: true                 # facts / compose / G_SOLVE / G_REP see it
   labels:                          # header labels; the key itself is the default
@@ -100,9 +104,18 @@ facets:
     customer: Заказчик
     okpd2_code: ОКПД2
     law: Закон
+    procedure: Способ
     year: Год
     price_bucket: НМЦК
+    section: Раздел
+    winner: Победитель
   max_value_chars: 120             # a customer's full legal name is long
+  # meta_fields left out of the header (still usable as mining.scope_field):
+  #   purchase_number / document_id — unique, G_REACH would match the id
+  #   region_code — same information as region
+  #   price_start / published — raw forms of price_bucket / year
+  #   customer_inn / phase — sparse identifiers, not query vocabulary
+  #   source_url / datasets / n_chars — provenance and length, not facets
 
 # --- S1 --------------------------------------------------------------------
 mining:
@@ -123,7 +136,7 @@ mining:
   # a `/`-separated breadcrumb and groups by folder (this corpus's `title`);
   # `exact` groups chunks sharing the value verbatim — the shape for a flat
   # categorical facet (zakupki's region/customer/okpd2_code/...).
-  scope_field: region
+  scope_field: okpd2_code
   scope_strategy: exact             # path | exact
   path_scope_gap: 1                # "path" only: 0 = same folder, 1 = one level up, null = off
   scope_df_ratio: 0.5              # above this share of a folder = its subject
