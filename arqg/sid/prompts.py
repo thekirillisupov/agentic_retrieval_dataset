@@ -117,16 +117,18 @@ COMPOSE_SYS = (TAG % "compose") + """
 """
 
 
-def compose_user(cell, facts: list[dict[str, Any]], feedback: str = "") -> str:
+def compose_user(cell, facts: list[dict[str, Any]], feedback: str = "",
+                 filter_spec: str = "") -> str:
     mech = MECHANICS[cell.mechanic]
     neg = ("\nДополнительно: вопрос должен содержать ОТРИЦАНИЕ или исключение "
            "(«кроме», «не относящийся к», «за исключением») как содержательное "
            "ограничение, а не как украшение." if cell.has_negation else "")
+    spec = f"\n\n{filter_spec}" if filter_spec else ""
     fb = f"\n\nПРЕДЫДУЩАЯ ПОПЫТКА ОТКЛОНЕНА. Причина: {feedback}\nИсправь именно это." if feedback else ""
     return f"""Механика поиска: {cell.mechanic}
 Что она означает: {mech['plan']}
 Как это должно проявиться в вопросе: {mech['compose']}
-Подтип (используй именно его): {cell.submechanic}{neg}
+Подтип (используй именно его): {cell.submechanic}{neg}{spec}
 
 Доступные факты:
 {_facts_block(facts)}
@@ -164,9 +166,34 @@ SOLVE_DEVIL_SYS = (TAG % "solve_devil") + """
 """
 
 
-def solve_user(question: str, answer: str, facts: list[dict[str, Any]]) -> str:
+def solve_user(question: str, answer: str, facts: list[dict[str, Any]],
+               declared_filter: str = "") -> str:
+    filt = (f"\n\nЗАЯВЛЕННЫЙ ФИЛЬТР (структурированная форма ограничений вопроса; "
+            f"добавь в JSON ключ \"filter_matches_question\": bool — точно ли он "
+            f"повторяет ограничения из текста вопроса, не больше и не меньше):\n"
+            f"{declared_filter}" if declared_filter else "")
     return (f"ВОПРОС: {question}\n\nПРЕДЛОЖЕННЫЙ ОТВЕТ: {answer}\n\n"
-            f"GOLD-ФАКТЫ:\n{_facts_block(facts)}")
+            f"GOLD-ФАКТЫ:\n{_facts_block(facts)}{filt}")
+
+
+# --------------------------------------------------------------------------- #
+# S3c — completeness: subject check for the augmentation branch
+# --------------------------------------------------------------------------- #
+SUBJECT_MATCH_SYS = (TAG % "subject_match") + """
+Тебе даны поисковый вопрос и карточка документа (фрагмент и его атрибуты).
+Определи, подпадает ли ПРЕДМЕТ этого документа под формулировку вопроса — то
+есть относится ли документ к тому классу объектов, о котором спрашивают.
+Не важно, упомянут ли документ в каком-либо ответе; важно только соответствие
+предмета документа формулировке вопроса.
+
+Ответ — строго JSON: {"matches": bool, "reason": "коротко"}
+"""
+
+
+def subject_match_user(question: str, chunk_id: str, text: str,
+                       facets: str = "") -> str:
+    head = f"АТРИБУТЫ: {facets}\n" if facets else ""
+    return f"ВОПРОС: {question}\n\n[CHUNK {chunk_id}]\n{head}{text}"
 
 
 # --------------------------------------------------------------------------- #

@@ -189,6 +189,52 @@ class ComposeConfig:
 
 
 @dataclass
+class CompletenessConfig:
+    """S3c — set-completeness for aggregation-type questions (see
+    completeness.py).
+
+    A «перечислите все…» question composed from a 2-chunk subgraph silently
+    claims the subgraph is the whole corpus; nothing in G_BROAD…G_REP checks
+    that the gold set equals the set the question denotes. When this stage is
+    active the composer must also emit a structured ``filter`` over the facet
+    metadata, the filter is evaluated against every document of the corpus,
+    and a candidate whose truth set exceeds its gold enters a bounded repair
+    loop (or, in the narrow safe case, has its gold augmented) — or is
+    rejected. Off when ``filter_fields`` is empty, so a corpus without facet
+    metadata behaves exactly as before.
+    """
+    enabled: bool = True
+    #: Mechanics whose answers claim exhaustiveness. Everything else skips S3c.
+    mechanics: list[str] = field(default_factory=lambda: [
+        "set_aggregation", "constraint_intersection"])
+    #: The field that names a *document* (one procurement, one card): truth and
+    #: gold are compared per document, not per chunk. Builtin chunk attributes
+    #: and `Chunk.meta` keys are both accepted (zakupki: `purchase_number`).
+    doc_field: str = "document_id"
+    #: Facet fields a declared filter may constrain — empty = the stage is off.
+    filter_fields: list[str] = field(default_factory=list)
+    #: ... of which these are compared numerically / as ISO dates.
+    numeric_fields: list[str] = field(default_factory=lambda: ["price_start", "year"])
+    date_fields: list[str] = field(default_factory=lambda: ["published"])
+    #: An in-scope candidate whose composer returned no usable filter cannot be
+    #: verified; with this on (default) it is rejected rather than shipped.
+    require_filter: bool = True
+    #: Repair-loop bounds. Iterations are LLM calls, so the limit mirrors
+    #: `compose.max_compose_iters`; the constraint cap bounds the *result* —
+    #: past ~2 added conditions the question reads as a structured query.
+    max_repair_iters: int = 2
+    max_added_constraints: int = 2
+    #: The augmentation branch: only when the whole truth set is small, the
+    #: answer is a projection of one facet field, and a judge confirms every
+    #: added document's subject. All conditions at once, or reject.
+    augment: bool = True
+    augment_max_docs: int = 5
+    #: Which of a document's chunks grounds an added gold: prefer the one whose
+    #: `section` facet contains this substring (zakupki: «Объект закупки»).
+    augment_section_hint: str = "объект"
+
+
+@dataclass
 class GatesConfig:
     """S4/S5 — gates (plan §6, §7.0)."""
     top_k: int = 10                       # top-k used by every gate probe
@@ -307,6 +353,11 @@ class SidPaths:
     def facts(self) -> str: return self._p("facts.jsonl")
     @property
     def candidates(self) -> str: return self._p("candidates.jsonl")
+    # S3c — one row per completeness decision (repaired / augmented / rejected
+    # with the exit reason and iterations spent), so a single run shows whether
+    # the repair limits are set right.
+    @property
+    def completeness_log(self) -> str: return self._p("completeness.jsonl")
     # S4/S5
     # Decision logs record EVERY candidate a stage looked at, pass or fail.
     # Resuming off the survivor file alone would re-process rejects — and for a
@@ -376,6 +427,7 @@ class SidConfig:
     mining: MiningConfig = field(default_factory=MiningConfig)
     taxonomy: TaxonomyConfig = field(default_factory=TaxonomyConfig)
     compose: ComposeConfig = field(default_factory=ComposeConfig)
+    completeness: CompletenessConfig = field(default_factory=CompletenessConfig)
     gates: GatesConfig = field(default_factory=GatesConfig)
     density: DensityConfig = field(default_factory=DensityConfig)
     distractors: DistractorConfig = field(default_factory=DistractorConfig)
