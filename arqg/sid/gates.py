@@ -33,7 +33,11 @@ from .retrieval import aggregate_gaps, aggregate_gaps_over_groups, gap_bin
 from .scoping import facet_header
 from .schema import Candidate, sid_hash
 
-GATE_ORDER = ["G_BROAD", "G_REACH", "G_SOLVE", "G_MIN", "G_REP"]
+# SELECT_1_OF_N is not a gate but it *is* a stage of the funnel: candidates that
+# clear G_REACH and then lose their 1-of-N batch used to vanish from the stats
+# (G_REACH.passed > G_SOLVE.seen with nothing in between to explain the gap),
+# which made the funnel unreadable exactly when someone audited it.
+GATE_ORDER = ["G_BROAD", "G_REACH", "SELECT_1_OF_N", "G_SOLVE", "G_MIN", "G_REP"]
 
 
 @dataclass
@@ -180,7 +184,8 @@ async def remeasure(cfg: SidConfig, env: Env, rec: dict) -> dict[str, Any]:
 # G_SOLVE
 # --------------------------------------------------------------------------- #
 async def g_solve(cfg: SidConfig, judge: BaseLLM, question: str, answer: str,
-                  facts: list[dict], stats: GateStats | None = None) -> tuple[bool, str, bool]:
+                  facts: list[dict], stats: GateStats | None = None,
+                  declared_filter: str = "") -> tuple[bool, str, bool]:
     """Returns (passed, reason, dual_critic_agreement).
 
     Raises `LLMConnectionError` as-is rather than turning it into a verdict:
@@ -189,13 +194,16 @@ async def g_solve(cfg: SidConfig, judge: BaseLLM, question: str, answer: str,
     tell them apart to avoid permanently rejecting a candidate over a network
     blip."""
     try:
-        v = await judge.complete_json(SOLVE_SYS, solve_user(question, answer, facts))
+        v = await judge.complete_json(
+            SOLVE_SYS, solve_user(question, answer, facts, declared_filter))
     except LLMConnectionError:
         raise
     except Exception as e:                                  # noqa: BLE001
         return False, f"critic error: {e}", True
 
     problems = []
+    if declared_filter and not v.get("filter_matches_question", True):
+        problems.append("заявленный фильтр не совпадает с ограничениями вопроса")
     if not v.get("solvable"):
         problems.append("ответ не выводится однозначно из gold-фактов")
     if not v.get("answer_correct", True):
@@ -401,7 +409,8 @@ def _decide(path: str, key: str, ident: str, outcome: str, **extra: Any) -> None
 
 
 async def recompose(cfg: SidConfig, gen: BaseLLM, cand: Candidate,
-                    feedback: str, iters: int) -> Candidate | None:
+                    feedback: str, iters: int,
+                    filter_spec: str = "") -> Candidate | None:
     """Rewrite a question against the critic's objection, keeping its cell and
     its facts. This is the v1 stand-in for the plan's incremental composition
     (§5.2): the same corrective signal at a fraction of the calls."""
@@ -410,11 +419,13 @@ async def recompose(cfg: SidConfig, gen: BaseLLM, cand: Candidate,
     cell = Cell(cand.mechanic, cand.submechanic, cand.has_negation)
     stub = {"subgraph_id": cand.subgraph_id, "chunks": cand.chunk_ids}
     fixed = await compose_one(cfg, gen, cand.batch_id, cand.instantiation_rank,
-                              cell, stub, cand.facts, feedback=feedback, iters=iters)
+                              cell, stub, cand.facts, feedback=feedback,
+                              iters=iters, filter_spec=filter_spec)
     if fixed is not None:
         # a repair is the same candidate, so the decision log and the gated
         # record stay keyed on one id across attempts
         fixed.candidate_id = cand.candidate_id
+        fixed.completeness = cand.completeness
     return fixed
 
 
@@ -461,6 +472,9 @@ async def run_gates(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM,
     new_winners = _pick_batch_winners(cfg, survivors, prior_bins(cfg))
     won = {c.candidate_id for c, _ in new_winners}
     for cand, _ in survivors:
+        # selection is a funnel stage like any other: without this row the
+        # candidates a batch discards simply vanish between G_REACH and G_SOLVE
+        stats.record("SELECT_1_OF_N", cand.mechanic, cand.candidate_id in won)
         if cand.candidate_id not in won:
             # its batch already produced a winner; resurrecting it later would
             # defeat the point of 1-of-N selection
@@ -474,39 +488,76 @@ async def run_gates(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM,
 
     # ---- expensive gate: G_SOLVE with a bounded repair loop --------------- #
     deferred = 0
+    # S3c re-check material: a repaired question is a *new* question, and for
+    # aggregation-type mechanics it must still denote exactly its gold set.
+    from .completeness import (CompletenessChecker, check_clean,
+                               completeness_active, in_scope)
+    checker = (CompletenessChecker(cfg, env.corpus)
+               if completeness_active(cfg) else None)
+
+    def _declared_filter(cand: Candidate) -> str:
+        if checker is None or not in_scope(cfg, cand.mechanic) or not cand.filter:
+            return ""
+        import json as _json
+        return _json.dumps(cand.filter, ensure_ascii=False)
 
     async def solve_stage(cand: Candidate, res: dict) -> dict | None:
         nonlocal deferred
+        # G_SOLVE is recorded once per candidate with its final outcome: a
+        # repair attempt is not a second candidate, and counting each attempt
+        # made `seen` exceed what SELECT_1_OF_N passed (the 17-vs-15 kind of
+        # bookkeeping hole an audit rightly flags).
+        reason = ""
         try:
             for attempt in range(1, max(1, cfg.compose.max_compose_iters) + 1):
-                ok, reason, agreement = await g_solve(cfg, judge, cand.question,
-                                                      cand.answer, cand.facts, stats)
-                stats.record("G_SOLVE", cand.mechanic, ok)
+                ok, reason, agreement = await g_solve(
+                    cfg, judge, cand.question, cand.answer, cand.facts, stats,
+                    declared_filter=_declared_filter(cand))
                 if ok:
+                    stats.record("G_SOLVE", cand.mechanic, True)
                     return _to_record(cfg, cand, res, agreement)
                 if attempt >= cfg.compose.max_compose_iters:
                     break
                 # feed the critic's objection back to the composer instead of
                 # discarding the subgraph: the facts are fine, the phrasing is not
-                repaired = await recompose(cfg, gen, cand, reason, attempt + 1)
+                spec = (checker.filter_spec()
+                        if checker is not None and in_scope(cfg, cand.mechanic)
+                        else "")
+                repaired = await recompose(cfg, gen, cand, reason, attempt + 1,
+                                           filter_spec=spec)
                 if repaired is None:
                     break
                 cand = repaired
                 res = await cheap_gates(cfg, env, cand)      # the question changed
                 if not (res["broad_ok"] and res["reach_ok"]):
+                    stats.record("G_SOLVE", cand.mechanic, False)
                     _decide(decisions, "candidate_id", cand.candidate_id,
                             "rejected_after_repair",
                             reason="broad" if not res["broad_ok"] else "reach")
                     return None
+                clean, why = check_clean(cfg, checker, cand)
+                if not clean:
+                    stats.record("G_SOLVE", cand.mechanic, False)
+                    _decide(decisions, "candidate_id", cand.candidate_id,
+                            "rejected_after_repair",
+                            reason=f"completeness: {why}"[:200])
+                    return None
+                if cand.completeness:
+                    cand.completeness = {**cand.completeness,
+                                         "filter": cand.filter,
+                                         "answer_field": cand.answer_field}
         except LLMConnectionError as e:
             # the judge/generator was unreachable, not "the critic said no" —
             # leave this candidate undecided (it stays cached in gate_winners,
             # not gate_decisions) so a later run retries G_SOLVE for it instead
-            # of losing it permanently to what may be a one-sided network path
+            # of losing it permanently to what may be a one-sided network path.
+            # Nothing is recorded in the funnel either: an undecided candidate
+            # is seen again — and counted — on the run that decides it.
             deferred += 1
             log.warning("S4: G_SOLVE deferred for %s — judge unreachable: %r",
                         cand.candidate_id, e)
             return None
+        stats.record("G_SOLVE", cand.mechanic, False)
         log.debug("S4: G_SOLVE rejected %s — %s", cand.candidate_id, reason)
         _decide(decisions, "candidate_id", cand.candidate_id,
                 "rejected_G_SOLVE", reason=reason[:200])
@@ -560,6 +611,9 @@ def _to_record(cfg: SidConfig, cand: Candidate, res: dict, agreement: bool) -> d
             "dual_critic_agreement": agreement,
             "generator_model": cand.generator_model,
             "taxonomy_version": cfg.taxonomy_version,
+            # S3c verdict (status, exit reason, iterations, declared filter);
+            # {} for mechanics outside completeness.mechanics or when off
+            "completeness": cand.completeness,
         },
     }
 
@@ -610,12 +664,29 @@ async def run_minimize(cfg: SidConfig, env: Env, judge: BaseLLM,
     stats = GateStats()
     log.info("S5: minimising %d tasks (%d already decided)", len(todo), len(seen))
 
+    from .completeness import completeness_active, doc_keys_of
+
     async def one(rec: dict) -> dict | None:
         mechanic = rec["coverage"]["A1_mechanic"]
         facts = rec["facts"]
         removed = 0
         if cfg.gates.run_min:
-            facts, removed = await g_min(cfg, judge, rec["question"], rec["answer"], facts)
+            minimized, removed = await g_min(cfg, judge, rec["question"],
+                                             rec["answer"], facts)
+            # For a completeness-verified task the gold set is defined by the
+            # question's own filter (gold docs == truth docs), not by what the
+            # solvability judge happens to find redundant: a removal that drops
+            # a whole document would un-answer the enumeration, so it is vetoed.
+            filt = (rec.get("provenance", {}).get("completeness") or {}).get("filter")
+            if removed and filt and completeness_active(cfg):
+                before = doc_keys_of(cfg, env.corpus, {f["chunk_id"] for f in facts})
+                after = doc_keys_of(cfg, env.corpus, {f["chunk_id"] for f in minimized})
+                if after != before:
+                    log.info("S5: %s — G_MIN removal would drop gold document(s) "
+                             "%s from a completeness-verified task; vetoed",
+                             rec["task_id"], sorted(before - after))
+                    minimized, removed = facts, 0
+            facts = minimized
         chunk_ids = list(dict.fromkeys(f["chunk_id"] for f in facts))
         ok = len(facts) >= cfg.gates.min_facts_after_min and len(chunk_ids) >= 2
         stats.record("G_MIN", mechanic, ok)

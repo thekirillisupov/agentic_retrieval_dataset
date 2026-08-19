@@ -91,6 +91,13 @@ class Candidate:
     generator_model: str = ""
     reasoning: str = ""
     bridge_kind: str = "entity"         # which S1 channel produced the subgraph
+    # S3c (completeness.py): the structured filter the question's constraints
+    # declare over the facet metadata, the field its answer projects (when the
+    # answer enumerates one facet), and the completeness verdict. Empty on
+    # mechanics outside `completeness.mechanics` and on corpora without facets.
+    filter: list[dict[str, Any]] = field(default_factory=list)
+    answer_field: str = ""
+    completeness: dict[str, Any] = field(default_factory=dict)
 
     @property
     def chunk_ids(self) -> list[str]:

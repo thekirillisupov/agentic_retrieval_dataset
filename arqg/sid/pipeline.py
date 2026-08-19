@@ -54,12 +54,18 @@ async def stage_compose(cfg: SidConfig) -> list[dict]:
     # `compose` can be run on its own against a facts cache written before
     # sections (or facets) existed, so both are filled in here too, not only in
     # the stage that extracts them.
-    attach_context(cfg, load_corpus(cfg), facts)
+    corpus = load_corpus(cfg)
+    attach_context(cfg, corpus, facts)
     llm = make_sid_client(cfg.llm)
+    # S3c needs the corpus (to evaluate declared filters over every document)
+    # and a judge (for the augmentation branch's subject check).
+    judge = make_sid_client(cfg.judge)
     try:
-        cands = await compose_candidates(cfg, llm, _subgraphs(cfg), facts)
+        cands = await compose_candidates(cfg, llm, _subgraphs(cfg), facts,
+                                         corpus=corpus, judge=judge)
     finally:
         await llm.aclose()
+        await judge.aclose()
     return cands
 
 

@@ -102,7 +102,16 @@ def plan_batches(cfg: SidConfig, subgraphs: list[dict],
 
 
 async def compose_candidates(cfg: SidConfig, llm: BaseLLM, subgraphs: list[dict],
-                             facts_by_chunk: dict[str, list[dict]]) -> list[Candidate]:
+                             facts_by_chunk: dict[str, list[dict]],
+                             corpus=None, judge: BaseLLM | None = None
+                             ) -> list[Candidate]:
+    from .completeness import (CompletenessChecker, completeness_active,
+                               ensure_complete, in_scope)
+    checker = None
+    if corpus is not None and completeness_active(cfg):
+        checker = CompletenessChecker(cfg, corpus)
+        log.info("S3c: completeness checker on — %d documents by %r",
+                 len(checker.docs), cfg.completeness.doc_field)
     done = load_done_keys(cfg.paths.candidates, "candidate_id")
     batches = plan_batches(cfg, subgraphs, facts_by_chunk)
     jobs: list[tuple[str, int, Cell, dict, list[dict]]] = []
@@ -121,7 +130,13 @@ async def compose_candidates(cfg: SidConfig, llm: BaseLLM, subgraphs: list[dict]
 
     async def one(job) -> None:
         batch_id, rank, cell, subgraph, facts = job
-        cand = await compose_one(cfg, llm, batch_id, rank, cell, subgraph, facts)
+        spec = (checker.filter_spec()
+                if checker is not None and in_scope(cfg, cell.mechanic) else "")
+        cand = await compose_one(cfg, llm, batch_id, rank, cell, subgraph, facts,
+                                 filter_spec=spec)
+        if cand is not None and checker is not None:
+            cand = await ensure_complete(cfg, checker, llm, judge, cand, cell,
+                                         facts, facts_by_chunk)
         if cand is not None:
             append_jsonl(cfg.paths.candidates, cand.to_dict())
 
@@ -131,11 +146,27 @@ async def compose_candidates(cfg: SidConfig, llm: BaseLLM, subgraphs: list[dict]
     return out
 
 
+def _parse_filter(obj: dict) -> list[dict]:
+    """Sanitise the composer's declared filter; validation against the corpus's
+    fields and ops happens in the checker, not here."""
+    raw = obj.get("filter")
+    out: list[dict] = []
+    if isinstance(raw, list):
+        for c in raw[:12]:
+            if isinstance(c, dict) and c.get("field") and c.get("op"):
+                out.append({"field": str(c["field"]).strip(),
+                            "op": str(c["op"]).strip(),
+                            "value": c.get("value")})
+    return out
+
+
 async def compose_one(cfg: SidConfig, llm: BaseLLM, batch_id: str, rank: int,
                       cell: Cell, subgraph: dict, facts: list[dict],
-                      feedback: str = "", iters: int = 1) -> Candidate | None:
+                      feedback: str = "", iters: int = 1,
+                      filter_spec: str = "") -> Candidate | None:
     try:
-        obj = await llm.complete_json(COMPOSE_SYS, compose_user(cell, facts, feedback))
+        obj = await llm.complete_json(
+            COMPOSE_SYS, compose_user(cell, facts, feedback, filter_spec))
     except Exception as e:                                   # noqa: BLE001
         log.warning("S3b: compose failed for %s: %s", subgraph["subgraph_id"], e)
         return None
@@ -173,6 +204,8 @@ async def compose_one(cfg: SidConfig, llm: BaseLLM, batch_id: str, rank: int,
         generator_model=cfg.llm.model,
         reasoning=str(obj.get("reasoning", ""))[:500],
         bridge_kind=subgraph.get("bridge_kind", "entity"),
+        filter=_parse_filter(obj) if filter_spec else [],
+        answer_field=str(obj.get("answer_field") or "").strip() if filter_spec else "",
     )
 
 

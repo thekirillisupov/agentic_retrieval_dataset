@@ -109,12 +109,48 @@ def _compose(user: str) -> dict[str, Any]:
         "disambiguation_first": "О каком объекте идёт речь, если он связан с {a}, но не с {b}?",
     }
     q = templates.get(mechanic, templates["entity_chain"]).format(a=subject, b=other)
-    return {
+    out = {
         "question": q,
         "answer": f"{subject}, связанный с {other}.",
         "used_fact_ids": [p[0] for p in picked],
         "reasoning": f"mock composition ({mechanic}) over facts from distinct chunks",
     }
+    out.update(_mock_filter(user))
+    return out
+
+
+def _mock_filter(user: str) -> dict[str, Any]:
+    """When the prompt carries the S3c filter spec, declare a filter the way a
+    cooperative model would: constrain the first available facet, and add one
+    more field per repair round (the feedback carries the current filter)."""
+    if "СТРУКТУРИРОВАННЫЙ ФИЛЬТР" not in user:
+        return {}
+    import json as _json
+    fields = re.findall(r"^- (\w+) \(([^)]*)\)$", user, re.MULTILINE)
+    attrs: dict[str, str] = {}
+    m = re.search(r"атрибуты: (.+)$", user, re.MULTILINE)
+    if m:
+        for part in m.group(1).split(" | "):
+            label, _, value = part.partition(": ")
+            if value:
+                attrs[label.strip()] = value.strip()
+    current: list[dict] = []
+    m = re.search(r"Текущий фильтр: (\[.*\])", user)
+    if m:
+        try:
+            current = [c for c in _json.loads(m.group(1)) if isinstance(c, dict)]
+        except Exception:                                   # noqa: BLE001
+            current = []
+    used = {c.get("field") for c in current}
+    filt = list(current)
+    for fld, label in fields:
+        if fld in used:
+            continue
+        value = attrs.get(label.strip()) or attrs.get(fld)
+        if value:
+            filt.append({"field": fld, "op": "eq", "value": value})
+            break
+    return {"filter": filt, "answer_field": fields[0][0] if fields else ""}
 
 
 def _solve(_user: str) -> dict[str, Any]:
@@ -193,6 +229,10 @@ def _isolation(_user: str) -> dict[str, Any]:
     return {"alternative_path_chunk_ids": [], "reason": "mock"}
 
 
+def _subject_match(_user: str) -> dict[str, Any]:
+    return {"matches": True, "reason": "mock"}
+
+
 def _fallback(_user: str) -> dict[str, Any]:
     return {"ok": True}
 
@@ -208,6 +248,7 @@ _HANDLERS = {
     "generate_distractor": _generate,
     "distractor_check": _distractor_check,
     "isolation": _isolation,
+    "subject_match": _subject_match,
 }
 
 
