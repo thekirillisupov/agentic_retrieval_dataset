@@ -1,0 +1,23 @@
+{
+  "tau_sim": 0.725494,
+  "tau_low": 0.629027,
+  "density_median_all": 161.0,
+  "density_median_reach": 201.0,
+  "reach_median_is_working": false,
+  "density_median_used": 161.0,
+  "n_reach_tasks": 93,
+  "similarity_shape": {
+    "mean": 0.5485,
+    "std": 0.091,
+    "p50": 0.5263,
+    "p80": 0.629,
+    "p95": 0.7255,
+    "p99": 0.7778,
+    "n_pairs": 179700
+  },
+  "reach_recheck": {
+    "sampled": 93,
+    "lost": 1,
+    "g3_loss_rate_after_injection": 0.0108
+  }
+}

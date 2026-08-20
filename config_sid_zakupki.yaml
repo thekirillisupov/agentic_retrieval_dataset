@@ -4,7 +4,7 @@
 #   python run_sid.py all --config config_sid.yaml --backend mock \
 #       --corpus tests/sample_corpus_sid.jsonl --out-dir out_sid_demo
 
-corpus_name: ckr
+corpus_name: zakupki
 language: ru
 taxonomy_version: v0.8
 log_level: INFO
@@ -159,7 +159,8 @@ mining:
 
 # --- S2 --------------------------------------------------------------------
 taxonomy:
-  mechanics: []                    # [] = all six A1 values
+  mechanics: []                    # [] = все механики из taxonomy.MECHANICS
+                                   # (шесть исходных + verbatim_lookup)
   negation_rate: 0.20              # plan wants >= 15% of tasks with negation
   candidates_per_cell: 3           # 1-of-N local diversity (plan says 6)
   keep_per_batch: 1

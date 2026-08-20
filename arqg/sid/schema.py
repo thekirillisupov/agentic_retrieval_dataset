@@ -98,6 +98,15 @@ class Candidate:
     filter: list[dict[str, Any]] = field(default_factory=list)
     answer_field: str = ""
     completeness: dict[str, Any] = field(default_factory=dict)
+    # disambiguation_first only: the ambiguous description the question opens
+    # with, exactly as it is phrased there. G_AMBIG probes the index with it
+    # and demands >= 2 plausible referents — a descriptor matching one document
+    # is a paraphrase, not an ambiguity (gates.py: ambiguity_check).
+    descriptor: str = ""
+    # verbatim_lookup only: the exact identifier the question carries. G_VERBATIM
+    # demands it verbatim in the question AND in a gold passage, with the entry
+    # chunk lexically easy and dense-hard (gates.py: verbatim_check).
+    identifier: str = ""
 
     @property
     def chunk_ids(self) -> list[str]:

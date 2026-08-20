@@ -1,0 +1,110 @@
+chunk_id:
+  format: '{file_name}::{index}'
+  coverage: 1.0
+file_name:
+  role: document handle / doc_type proxy
+  coverage: 1.0
+index:
+  role: position in document; same-document distance
+  coverage: 1.0
+document_id:
+  role: logical document
+  coverage: 1.0
+title:
+  role: breadcrumb path — S1 mines within a folder of it
+  coverage: 1.0
+  share_breadcrumb: 0.0482
+  median_depth: 2
+  n_scopes_at_gap_1: 9
+meta_fields:
+  customer:
+    coverage: 0.4661
+    n_distinct: 877
+  customer_inn:
+    coverage: 0.055
+    n_distinct: 249
+  datasets:
+    coverage: 1.0
+    n_distinct: 0
+  document_id:
+    coverage: 1.0
+    n_distinct: 10460
+  law:
+    coverage: 0.5888
+    n_distinct: 2
+  n_chars:
+    coverage: 1.0
+    n_distinct: 1368
+  okpd2_code:
+    coverage: 0.4423
+    n_distinct: 178
+  phase:
+    coverage: 0.0551
+    n_distinct: 2
+  price_bucket:
+    coverage: 1.0
+    n_distinct: 5
+  price_start:
+    coverage: 1.0
+    n_distinct: 9793
+  procedure:
+    coverage: 0.0551
+    n_distinct: 9
+  published:
+    coverage: 1.0
+    n_distinct: 1867
+  purchase_number:
+    coverage: 1.0
+    n_distinct: 10460
+  region:
+    coverage: 0.5886
+    n_distinct: 92
+  region_code:
+    coverage: 0.5888
+    n_distinct: 91
+  section:
+    coverage: 1.0
+    n_distinct: 5
+  source_url:
+    coverage: 0.4663
+    n_distinct: 3961
+  winner:
+    coverage: 0.0166
+    n_distinct: 54
+  year:
+    coverage: 1.0
+    n_distinct: 13
+scope:
+  field: okpd2_code
+  strategy: exact
+  source: meta_fields
+surfaced_facets:
+  fields:
+  - region
+  - customer
+  - okpd2_code
+  - law
+  - procedure
+  - year
+  - price_bucket
+  - section
+  - winner
+  in_passage: true
+  in_prompts: true
+  missing_on_this_corpus: []
+  example: 'Регион: Челябинская область | Заказчик: АО «Челябинский Метротрамвай»
+    | Закон: 223-ФЗ | Способ: Закупка иного способа размещения | Год: 2022 | НМЦК:
+    свыше 1 млрд руб. | Раздел: Общие сведения о закупке'
+notes:
+- date / ACL / doc_type tags are not present in this corpus; temporal_resolution therefore
+  relies on dates extracted from text.
+- 'title is a path, not a headline: it is the section anchor S1 scopes on by default
+  (mining.scope_field=title, scope_strategy=path — see scoping.py). It is NOT registered
+  as an entity-graph tag — that would bypass tau_idf and make every folder sibling
+  a bridge.'
+- additional per-chunk facets are available (see meta_fields above) — point mining.scope_field
+  at one of them with scope_strategy=exact to mine within chunks that share its value
+  verbatim (a categorical facet, not a path), instead of the title breadcrumb.
+- 'a facet only reaches the retriever if `facets.fields` lists it: grouping chunks
+  by a field the index cannot see gives the composer an attribute to name and the
+  probe nothing to match it against.'

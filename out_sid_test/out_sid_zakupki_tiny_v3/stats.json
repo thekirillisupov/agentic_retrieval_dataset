@@ -1,0 +1,400 @@
+{
+  "n_tasks": 93,
+  "coverage": {
+    "by_mechanic": {
+      "constraint_intersection": 4,
+      "entity_chain": 8,
+      "comparison": 33,
+      "temporal_resolution": 24,
+      "set_aggregation": 17,
+      "disambiguation_first": 7
+    },
+    "mechanic_balance_ok": false,
+    "by_submechanic": {
+      "тип объекта + числовой порог": 1,
+      "место → размещённый там объект → его показатель": 2,
+      "две организации по одному показателю": 9,
+      "одна сторона названа, вторая задана только описанием": 4,
+      "значение на конкретный год": 2,
+      "продукт → его создатель → свойство создателя": 2,
+      "два продукта по техническому параметру": 5,
+      "организация → её подразделение → свойство подразделения": 1,
+      "первое/последнее событие в ряду": 5,
+      "два места по масштабу": 4,
+      "план против факта": 4,
+      "все свойства/модели одного продуктового ряда": 3,
+      "объект, названный только по функции": 3,
+      "все события в заданном интервале": 2,
+      "что изменилось между двумя датами": 5,
+      "омонимичное название объекта": 3,
+      "принадлежность организации + период": 2,
+      "все объекты одного класса у одной организации": 4,
+      "порядок событий во времени": 8,
+      "все места, где присутствует организация": 6,
+      "обе стороны заданы описанием без имён собственных": 5,
+      "актуальное значение против более раннего": 4,
+      "два периода одной организации": 2,
+      "все участники одного проекта": 2,
+      "событие → его участник → более поздний факт об участнике": 3,
+      "сущность, заданная косвенным признаком": 1,
+      "назначение объекта + материал/технология": 1
+    },
+    "share_negation": 0.2473
+  },
+  "complexity": {
+    "hop_depth": {
+      "2": 83,
+      "4": 4,
+      "3": 5,
+      "5": 1
+    },
+    "fused_gap_bins": {
+      "low": 13,
+      "mid": 48,
+      "high": 32
+    },
+    "fused_gap_share": {
+      "low": 0.1398,
+      "mid": 0.5161,
+      "high": 0.3441
+    },
+    "target_fused_gap_share": {
+      "low": 0.3,
+      "mid": 0.4,
+      "high": 0.3
+    },
+    "lexicon_arm_size": 7,
+    "sparse_origin": 17
+  },
+  "gold": {
+    "mean_gold_chunks": 2.183,
+    "mean_fact_groups": 2.172,
+    "share_singleton_groups": 0.9851,
+    "ndcg_granularity": "chunk",
+    "ndcg_note": "groups are singletons — chunk granularity is identical"
+  },
+  "sections": {
+    "share_root_only": 1.0,
+    "share_multi_section": 1.0,
+    "shared_depth_median": 0,
+    "shared_depth": {
+      "0": 93
+    }
+  },
+  "bridge_kind": {
+    "entity": 55,
+    "similarity": 38
+  },
+  "distractors": {
+    "tasks_with_injection": 29,
+    "share_tasks_with_injection": 0.3118,
+    "levels": {
+      "L1_transplant": 2,
+      "L2_perturbed": 39,
+      "L3_generated": 5
+    },
+    "share_L3": 0.1087,
+    "share_L3_alarm": true,
+    "types": {
+      "near_duplicate": 39,
+      "topical_lure": 7
+    },
+    "share_tasks_with_empty_L2_band": 0.5484
+  },
+  "splits": {
+    "train": 74,
+    "holdout": 18
+  },
+  "deduplicated": 0,
+  "density": {
+    "tau_sim": 0.725494,
+    "tau_low": 0.629027,
+    "density_median_all": 161.0,
+    "density_median_reach": 201.0,
+    "reach_median_is_working": false,
+    "density_median_used": 161.0,
+    "n_reach_tasks": 93,
+    "similarity_shape": {
+      "mean": 0.5485,
+      "std": 0.091,
+      "p50": 0.5263,
+      "p80": 0.629,
+      "p95": 0.7255,
+      "p99": 0.7778,
+      "n_pairs": 179700
+    },
+    "reach_recheck": {
+      "sampled": 93,
+      "lost": 1,
+      "g3_loss_rate_after_injection": 0.0108
+    }
+  },
+  "gates": {
+    "corpus": "ckr",
+    "funnel": {
+      "G_BROAD": {
+        "seen": 540,
+        "passed": 187
+      },
+      "G_REACH": {
+        "seen": 187,
+        "passed": 176
+      },
+      "G_AMBIG": {
+        "seen": 21,
+        "passed": 12
+      },
+      "G_VERBATIM": {
+        "seen": 16,
+        "passed": 0
+      },
+      "SELECT_1_OF_N": {
+        "seen": 151,
+        "passed": 117
+      },
+      "G_SOLVE": {
+        "seen": 117,
+        "passed": 97
+      },
+      "G_MIN": {
+        "seen": 97,
+        "passed": 93
+      },
+      "G_REP": {
+        "seen": 93,
+        "passed": 93
+      }
+    },
+    "pass_rate": {
+      "G_BROAD": 0.3463,
+      "G_REACH": 0.9412,
+      "G_AMBIG": 0.5714,
+      "G_VERBATIM": 0.0,
+      "SELECT_1_OF_N": 0.7748,
+      "G_SOLVE": 0.8291,
+      "G_MIN": 0.9588,
+      "G_REP": 1.0
+    },
+    "by_mechanic": {
+      "entity_chain": {
+        "G_BROAD": {
+          "seen": 66,
+          "passed": 12,
+          "pass_rate": 0.1818
+        },
+        "G_REACH": {
+          "seen": 12,
+          "passed": 12,
+          "pass_rate": 1.0
+        },
+        "SELECT_1_OF_N": {
+          "seen": 12,
+          "passed": 12,
+          "pass_rate": 1.0
+        },
+        "G_SOLVE": {
+          "seen": 12,
+          "passed": 8,
+          "pass_rate": 0.6667
+        },
+        "G_MIN": {
+          "seen": 8,
+          "passed": 8,
+          "pass_rate": 1.0
+        },
+        "G_REP": {
+          "seen": 8,
+          "passed": 8,
+          "pass_rate": 1.0
+        }
+      },
+      "comparison": {
+        "G_BROAD": {
+          "seen": 165,
+          "passed": 57,
+          "pass_rate": 0.3455
+        },
+        "G_REACH": {
+          "seen": 57,
+          "passed": 53,
+          "pass_rate": 0.9298
+        },
+        "SELECT_1_OF_N": {
+          "seen": 53,
+          "passed": 37,
+          "pass_rate": 0.6981
+        },
+        "G_SOLVE": {
+          "seen": 37,
+          "passed": 33,
+          "pass_rate": 0.8919
+        },
+        "G_MIN": {
+          "seen": 33,
+          "passed": 33,
+          "pass_rate": 1.0
+        },
+        "G_REP": {
+          "seen": 33,
+          "passed": 33,
+          "pass_rate": 1.0
+        }
+      },
+      "temporal_resolution": {
+        "G_BROAD": {
+          "seen": 137,
+          "passed": 49,
+          "pass_rate": 0.3577
+        },
+        "G_REACH": {
+          "seen": 49,
+          "passed": 46,
+          "pass_rate": 0.9388
+        },
+        "SELECT_1_OF_N": {
+          "seen": 46,
+          "passed": 31,
+          "pass_rate": 0.6739
+        },
+        "G_SOLVE": {
+          "seen": 31,
+          "passed": 25,
+          "pass_rate": 0.8065
+        },
+        "G_MIN": {
+          "seen": 25,
+          "passed": 24,
+          "pass_rate": 0.96
+        },
+        "G_REP": {
+          "seen": 24,
+          "passed": 24,
+          "pass_rate": 1.0
+        }
+      },
+      "disambiguation_first": {
+        "G_BROAD": {
+          "seen": 59,
+          "passed": 23,
+          "pass_rate": 0.3898
+        },
+        "G_REACH": {
+          "seen": 23,
+          "passed": 21,
+          "pass_rate": 0.913
+        },
+        "G_AMBIG": {
+          "seen": 21,
+          "passed": 12,
+          "pass_rate": 0.5714
+        },
+        "SELECT_1_OF_N": {
+          "seen": 12,
+          "passed": 11,
+          "pass_rate": 0.9167
+        },
+        "G_SOLVE": {
+          "seen": 11,
+          "passed": 10,
+          "pass_rate": 0.9091
+        },
+        "G_MIN": {
+          "seen": 10,
+          "passed": 7,
+          "pass_rate": 0.7
+        },
+        "G_REP": {
+          "seen": 7,
+          "passed": 7,
+          "pass_rate": 1.0
+        }
+      },
+      "verbatim_lookup": {
+        "G_BROAD": {
+          "seen": 23,
+          "passed": 16,
+          "pass_rate": 0.6957
+        },
+        "G_REACH": {
+          "seen": 16,
+          "passed": 16,
+          "pass_rate": 1.0
+        },
+        "G_VERBATIM": {
+          "seen": 16,
+          "passed": 0,
+          "pass_rate": 0.0
+        }
+      },
+      "set_aggregation": {
+        "G_BROAD": {
+          "seen": 70,
+          "passed": 25,
+          "pass_rate": 0.3571
+        },
+        "G_REACH": {
+          "seen": 25,
+          "passed": 23,
+          "pass_rate": 0.92
+        },
+        "SELECT_1_OF_N": {
+          "seen": 23,
+          "passed": 21,
+          "pass_rate": 0.913
+        },
+        "G_SOLVE": {
+          "seen": 21,
+          "passed": 17,
+          "pass_rate": 0.8095
+        },
+        "G_MIN": {
+          "seen": 17,
+          "passed": 17,
+          "pass_rate": 1.0
+        },
+        "G_REP": {
+          "seen": 17,
+          "passed": 17,
+          "pass_rate": 1.0
+        }
+      },
+      "constraint_intersection": {
+        "G_BROAD": {
+          "seen": 20,
+          "passed": 5,
+          "pass_rate": 0.25
+        },
+        "G_REACH": {
+          "seen": 5,
+          "passed": 5,
+          "pass_rate": 1.0
+        },
+        "SELECT_1_OF_N": {
+          "seen": 5,
+          "passed": 5,
+          "pass_rate": 1.0
+        },
+        "G_SOLVE": {
+          "seen": 5,
+          "passed": 4,
+          "pass_rate": 0.8
+        },
+        "G_MIN": {
+          "seen": 4,
+          "passed": 4,
+          "pass_rate": 1.0
+        },
+        "G_REP": {
+          "seen": 4,
+          "passed": 4,
+          "pass_rate": 1.0
+        }
+      }
+    },
+    "dual_critic": {
+      "calls": 0,
+      "disagreements": 0,
+      "disagreement_rate": null
+    }
+  }
+}

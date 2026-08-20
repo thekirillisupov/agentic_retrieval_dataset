@@ -1,0 +1,540 @@
+{"candidate_id": "c_04fcfabdf5", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a7a988b538", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_09167bd553", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_bc81877a6b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_6c96d5d8df", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_843e9587e6", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1d5e3cfdec", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_4fc31c570b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_bdeafd8931", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e25af20e59", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1be00353a2", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_2b3ddf83c0", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ecc088f901", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_b5306b0b49", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_fc9d0d2e8a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5f64733a66", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_12b69d20d5", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1b8f4eda5d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1748466211", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_3491081f13", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8f0d53087c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5cac57baaa", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5cb29fffd8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_0f0f859a2f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7023bb1cdd", "outcome": "rejected_G_VERBATIM", "reason": "lexical_misses_entry"}
+{"candidate_id": "c_de79347327", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3e368b78dc", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_9da57edf99", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7f5bfece1c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_6e7d6cfdda", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3ab7e85894", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_349a3db3a2", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_12ab4990e6", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_07ca034f62", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_6fb83fed85", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_de5f3b97d7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f4d7838491", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_a863d90d8b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_fad1a3b5f7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_53c4f9edde", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_39e329de20", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_fe51dcd936", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_75ec07a254", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1101081499", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_11c9555845", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_bce65c0b24", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_cfa00752ba", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7f301fcbb7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8b92fdf831", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_03d6a8cd86", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_848ce8c41c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_fe3af391fa", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_58012883e0", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e3fdbbd054", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_130e635636", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7a46955e1e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_95b66853a5", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_412a6e44db", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_1265784250", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_4f9e91852a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e8b4f61cdd", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_977c979ccc", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_cc7699c83a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_973387874b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_bee371ff6f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_09bf69de5d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8d1722bbef", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7b4bc15a47", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_b8a4c7884a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_629b99385f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_64b5524c1b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_361f1faf14", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_661071b309", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_60f54b7ec8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f3b77e1e5c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a8a0e908a3", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_284ad881ea", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5d80435408", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8677a119a6", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_58db5c3108", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c6452f52e8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_acff7b0e56", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_9c1ab77682", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_b205f29fa1", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f1a66b638e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_2b8389d267", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c48ccbeb32", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_6788de7cde", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f5b1c83b5d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_b391c69fb6", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_59d0f665be", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8f9c36e3fc", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_633f736cac", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f083f8d231", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c1c1b10e37", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5a2d24f1f4", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_24a1c4a8f7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5c7ae96cb9", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5a89fc60aa", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a1ffaa33a4", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5b92788e26", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_66e7ef02ce", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a77277b9f5", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_e42364bfbb", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_2f553d5f43", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_0c9f821125", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8a2a6a3e31", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_bfbc070442", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ea28cfab5a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7cc959403a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_199abf5efd", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_31163c894d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5a56018ce0", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_84229d77e3", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_bc998de6c7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e563d21260", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_7dc5bdb75a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_4a309f7b81", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_9f0d1f1b0c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_03eb282afc", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_506c131091", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f8c1541b90", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5c463452cd", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8dcf43e42f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_43bc194d63", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_857ec3c2b7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1223e88362", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e005fa1fc1", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c4e0d89dde", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_761e4c129b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1422d6fe6a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8678b6d708", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_9e707a5746", "outcome": "rejected_G_AMBIG", "reason": "descriptor_misses_referent"}
+{"candidate_id": "c_5040cdebbf", "outcome": "rejected_G_AMBIG", "reason": "descriptor_misses_referent"}
+{"candidate_id": "c_c69eb27d0f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_46f5b726c6", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3855ea6656", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_e8204fc101", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_06bc2d9f76", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_07129ec179", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a7022c349c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ae4cda2d68", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a28d804b1a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_46c4f78d8e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3d9fccb105", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_d7b55a77fb", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e167a20065", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c12262cbb7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8078ab71c5", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_58f5f66d2e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c206c641c5", "outcome": "rejected_G_AMBIG", "reason": "descriptor_misses_referent"}
+{"candidate_id": "c_ae0fa6c876", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_67cce3835d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c88ade72df", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_956d25ef80", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_0b65300f42", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_bc0f284aec", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_771a277470", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_183a0560bb", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_2c934959dd", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_fea921c68f", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_def05a42d5", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e74d963953", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_75a645925a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_40ae9bfff1", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7899bbc189", "outcome": "rejected_G_VERBATIM", "reason": "lexical_misses_entry"}
+{"candidate_id": "c_996b619d41", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_580be57db8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a87f24319e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_db8da7cc1a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a5bb5b903c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_0bf130a735", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c6525a2d45", "outcome": "rejected_G_AMBIG", "reason": "descriptor_misses_referent"}
+{"candidate_id": "c_1da87537ef", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_f24986e8f3", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ecb8d97c4b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8719f8bfdb", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c77e7def97", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_4769bab42c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ef170216bd", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_0fc0633a27", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_d7d142702c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_409e0cb118", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1afb3ca999", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5e53c8dfc9", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_4ec5f23c3f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a3dcc3f16c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8705d54dc8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7d7767ea7e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a7ebac0551", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_24438883cb", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ab07f47c62", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_af6f8174cd", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_b1573eb3d1", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a570fa441b", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_fb168ba630", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7c7becca69", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a6b4a6fb6d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_fe8e350ce1", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7a91747371", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a96ceb2b81", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5b18215004", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_c1f729e41a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c7f93b9662", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_b465dbd5b8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_16f719d9eb", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_bf5c61ba77", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_d7255674de", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_d82cd9688f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a2d947792e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_557fa90318", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_d06df5fc0c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a172a99a03", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_01b96bc94b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_eddcd3f7ce", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ce06bdbbe6", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_750e49e15d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_d663b1cfad", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_3e517f2dab", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_0786e7afaf", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a720d0f541", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a6429c89cd", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5bdfec2cb7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e86aa24c69", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a7ad45559f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_53c621cf8a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c6b27ccab1", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_adaed19a7e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_46a1a4f9c9", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c08408f031", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_204f07dd1b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a5fd078e4f", "outcome": "rejected_G_AMBIG", "reason": "descriptor_misses_referent"}
+{"candidate_id": "c_add8f1fb1e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_0f94963100", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8b143229a1", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_6d0e739ce3", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7e2c6dc07a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f2d7eb9d7f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5ba979c194", "outcome": "rejected_G_VERBATIM", "reason": "lexical_misses_entry"}
+{"candidate_id": "c_7981d814ed", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_0c3a1cfcc4", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3196716a1c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f6f8f3b897", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a2148c2d25", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_05a3071add", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c4368c2c2c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e98e3c88fe", "outcome": "rejected_G_AMBIG", "reason": "descriptor_misses_referent"}
+{"candidate_id": "c_618b2e7852", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_4bc3368655", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_d28b95356c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3c3d0ee05c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_96d6434fd4", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f4353a13f4", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_df653b35c7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ca7d9c71e5", "outcome": "rejected_G_AMBIG", "reason": "descriptor_misses_referent"}
+{"candidate_id": "c_7fea8c4c51", "outcome": "rejected_G_AMBIG", "reason": "descriptor_misses_referent"}
+{"candidate_id": "c_45097ca672", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ac6dbc62b2", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_28dd2be530", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_91bf31a1f2", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_af222923b8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ab34b7a833", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_11cdc8e686", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7f170f3388", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3dacb2d18d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_92efd229f5", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_14db82d263", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f5076c935a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_049d660bf0", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1fa367c4b8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ac9fda4119", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_97acd0be92", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_b096e905bd", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_0e2c0e1f10", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_262fbc8ec6", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_6ebe584564", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_217e4d6cd0", "outcome": "rejected_G_VERBATIM", "reason": "lexical_misses_entry"}
+{"candidate_id": "c_b0661bf7a3", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3a30e4d443", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_d3ba6d43ed", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_bba79ff6c0", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c594d225d4", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_38d5d77f61", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5001218671", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_918111b041", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_60dffd6726", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_9f9194a6ae", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_649cb1df22", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1c2000e40e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_edbf2d305b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_4d17a01274", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_574accb054", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c9f650db07", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_171ee274ce", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_edfb37e15a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_2dfcbbabef", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8e947d61eb", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_0f12e1ddf1", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_c65527810d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_95f7fff799", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e9fc956e91", "outcome": "rejected_G_AMBIG", "reason": "descriptor_misses_referent"}
+{"candidate_id": "c_01f6cb7f55", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f10d91ab4d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7295d52b71", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_960e18db2b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_87fe235ad8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1c2d9d2c47", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_819a54b658", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_97728e7219", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a24589bfba", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a9b2622ffc", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_237101c36c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_cc95af92e5", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_233e743c89", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8330c940a0", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_9a39be2ec5", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_9ad3438f07", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_6cf001db43", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f44bf0ec0f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_77c0ff12dd", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_af1ab32bf8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_54eac5c267", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_189c5bbdb8", "outcome": "rejected_G_VERBATIM", "reason": "dense_already_finds_entry"}
+{"candidate_id": "c_fcf29853fe", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3fc7776c41", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8ea7fb23f4", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_797ca8e883", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_edeabe0fc8", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7f49b1b952", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_8f3b2bde8a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_50603dd8f7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_b45beb2021", "outcome": "rejected_G_VERBATIM", "reason": "lexical_misses_entry"}
+{"candidate_id": "c_fce3ca02d7", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_cfc3f33f5f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_20d1672604", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e7c4b6f882", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5a2f1a27b6", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_384d946036", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_58acd6d60a", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_dbc71787f2", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_43a072dfb5", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e06d0f4599", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7356f63d9b", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3c7bd0bdc6", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e2f559000c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7740476973", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3e7facf6a1", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_97ff8cc77c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_62c2f6ebb4", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_bb083c45df", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_fd7e79ad63", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_ba38d48f77", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7b0713e821", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_cb25dbaa6c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a8ba62ad7a", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_13d25935c3", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_e27e97b636", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_50e7b48041", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_582a43c181", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a00b9c7d2f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_14a82acebd", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_6db51d868f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_863a709eb5", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_410d934a66", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_359b340490", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_5ebfb36e1c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a4edc83ba0", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_af4d1b337c", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_3ee40ba586", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_4179f2cceb", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_4b5eabf720", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_9669a7170e", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_6aff17b5d2", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_1b7da96bdc", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_11a83cd85d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_45913ba961", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_7a5e99ed16", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_f13c8472d6", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_036d170039", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_a7bde3c21d", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_963beb41af", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_78f17aff85", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_63dad67331", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_47ca87ea6b", "outcome": "rejected_G_REACH"}
+{"candidate_id": "c_57c52b12d5", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_9724116b10", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_4c939a08d2", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_427b818349", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_b6401c255f", "outcome": "rejected_G_BROAD"}
+{"candidate_id": "c_b5d399e888", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_c15719d5f3", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_dfc43c692e", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_ccbb2e7442", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_cebed27e3f", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_500158f5b7", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_f093ffbc13", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_0b10cf74f5", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_48ff0908ce", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_367075c4c2", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_5edcbe7acb", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_761816f063", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_9c89da55d1", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_31e03283f9", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_e4db5bb66a", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_a49a63a145", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_e32a5e193e", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_2c76ae919d", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_dcd09d8a4c", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_10b74c6d9b", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_eb1f3ebc10", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_ab9786d13f", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_aaa94a4d2e", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_921a87811d", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_59c69631cb", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_0547275364", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_dd938dbd48", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_77a6b74ff2", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_f361939e3e", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_5d47aa0775", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_24dd0d6e8a", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_5a917f49fa", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_acbf70593e", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_4eb1e259bb", "outcome": "not_selected_1_of_N"}
+{"candidate_id": "c_eda0463235", "outcome": "rejected_after_repair", "reason": "broad"}
+{"candidate_id": "c_3e55fcc4bf", "outcome": "rejected_after_repair", "reason": "broad"}
+{"candidate_id": "c_ac294b8f18", "outcome": "rejected_after_repair", "reason": "broad"}
+{"candidate_id": "c_d1d6ae4c93", "outcome": "rejected_after_repair", "reason": "broad"}
+{"candidate_id": "c_a8934ac291", "outcome": "rejected_after_repair", "reason": "broad"}
+{"candidate_id": "c_915f5958e6", "outcome": "rejected_after_repair", "reason": "broad"}
+{"candidate_id": "c_01c2b6989e", "outcome": "rejected_after_repair", "reason": "broad"}
+{"candidate_id": "c_13658d3d8b", "outcome": "rejected_after_repair", "reason": "completeness: 136 documents beyond gold match the filter"}
+{"candidate_id": "c_9230531204", "outcome": "rejected_after_repair", "reason": "broad"}
+{"candidate_id": "c_e756c807c2", "outcome": "rejected_after_repair", "reason": "broad"}
+{"candidate_id": "c_322f093ce8", "outcome": "rejected_G_SOLVE", "reason": "ответ не выводится однозначно из gold-фактов; предложенный ответ не следует из фактов"}
+{"candidate_id": "c_ac4dc86f11", "outcome": "rejected_G_SOLVE", "reason": "ответ не выводится однозначно из gold-фактов; предложенный ответ не следует из фактов"}
+{"candidate_id": "c_442e9d51c9", "outcome": "rejected_after_repair", "reason": "broad"}
+{"candidate_id": "c_a436b7b61b", "outcome": "rejected_G_SOLVE", "reason": "ответ не выводится однозначно из gold-фактов; предложенный ответ не следует из фактов"}
+{"candidate_id": "c_23537b21e5", "outcome": "rejected_G_SOLVE", "reason": "ответ не выводится однозначно из gold-фактов; предложенный ответ не следует из фактов"}
+{"candidate_id": "c_93f4ca3746", "outcome": "rejected_G_SOLVE", "reason": "ответ не выводится однозначно из gold-фактов; предложенный ответ не следует из фактов"}
+{"candidate_id": "c_2690181dc4", "outcome": "rejected_G_SOLVE", "reason": "ответ не выводится однозначно из gold-фактов; предложенный ответ не следует из фактов"}
+{"candidate_id": "c_effb34ed2b", "outcome": "rejected_G_SOLVE", "reason": "ответ не выводится однозначно из gold-фактов; предложенный ответ не следует из фактов"}
+{"candidate_id": "c_160701ba70", "outcome": "rejected_after_repair", "reason": "completeness: 3 documents beyond gold match the filter"}
+{"candidate_id": "c_1fef36d659", "outcome": "rejected_G_SOLVE", "reason": "ответ не выводится однозначно из gold-фактов; предложенный ответ не следует из фактов"}
+{"candidate_id": "c_08a6459e05", "outcome": "passed", "task_id": "syn_ru_ckr_3c7bfc3a"}
+{"candidate_id": "c_e4549aefc4", "outcome": "passed", "task_id": "syn_ru_ckr_af4c23ba"}
+{"candidate_id": "c_f5aa58c5cc", "outcome": "passed", "task_id": "syn_ru_ckr_78572973"}
+{"candidate_id": "c_0541a84e11", "outcome": "passed", "task_id": "syn_ru_ckr_aaf85b98"}
+{"candidate_id": "c_8f62b39f30", "outcome": "passed", "task_id": "syn_ru_ckr_542fd495"}
+{"candidate_id": "c_036d1086a0", "outcome": "passed", "task_id": "syn_ru_ckr_6a63d240"}
+{"candidate_id": "c_1756bcbfdf", "outcome": "passed", "task_id": "syn_ru_ckr_c22313fc"}
+{"candidate_id": "c_3fdb2aa1f8", "outcome": "passed", "task_id": "syn_ru_ckr_ced4eec3"}
+{"candidate_id": "c_fff6c9329c", "outcome": "passed", "task_id": "syn_ru_ckr_0d667404"}
+{"candidate_id": "c_7cdbea8f0a", "outcome": "passed", "task_id": "syn_ru_ckr_1eb2b9be"}
+{"candidate_id": "c_918a079c32", "outcome": "passed", "task_id": "syn_ru_ckr_4ef6f3be"}
+{"candidate_id": "c_436d8fd4de", "outcome": "passed", "task_id": "syn_ru_ckr_57a884c4"}
+{"candidate_id": "c_f7ae37cd26", "outcome": "passed", "task_id": "syn_ru_ckr_65b9f2fd"}
+{"candidate_id": "c_709fa38fdf", "outcome": "passed", "task_id": "syn_ru_ckr_62dd51d4"}
+{"candidate_id": "c_877f7e28a7", "outcome": "passed", "task_id": "syn_ru_ckr_7e24ed06"}
+{"candidate_id": "c_022132578c", "outcome": "passed", "task_id": "syn_ru_ckr_fbc3074e"}
+{"candidate_id": "c_19629684d7", "outcome": "passed", "task_id": "syn_ru_ckr_7e6f19ec"}
+{"candidate_id": "c_e7c301af1b", "outcome": "passed", "task_id": "syn_ru_ckr_c2065a92"}
+{"candidate_id": "c_c32f94037b", "outcome": "passed", "task_id": "syn_ru_ckr_7ebd4034"}
+{"candidate_id": "c_153513d515", "outcome": "passed", "task_id": "syn_ru_ckr_2672fea0"}
+{"candidate_id": "c_c94243a36a", "outcome": "passed", "task_id": "syn_ru_ckr_0b2404ee"}
+{"candidate_id": "c_c6ec8c21d6", "outcome": "passed", "task_id": "syn_ru_ckr_647e5795"}
+{"candidate_id": "c_6bb32ec5f8", "outcome": "passed", "task_id": "syn_ru_ckr_4feab24d"}
+{"candidate_id": "c_342a8953db", "outcome": "passed", "task_id": "syn_ru_ckr_b770266e"}
+{"candidate_id": "c_407d0fea90", "outcome": "passed", "task_id": "syn_ru_ckr_f405fc63"}
+{"candidate_id": "c_f115455044", "outcome": "passed", "task_id": "syn_ru_ckr_4ac8f930"}
+{"candidate_id": "c_ecad810e9f", "outcome": "passed", "task_id": "syn_ru_ckr_c4c2dad7"}
+{"candidate_id": "c_8795b9729e", "outcome": "passed", "task_id": "syn_ru_ckr_8901de3b"}
+{"candidate_id": "c_efa2f6e4ea", "outcome": "passed", "task_id": "syn_ru_ckr_9da76ec1"}
+{"candidate_id": "c_56ee35a464", "outcome": "passed", "task_id": "syn_ru_ckr_709fd5d6"}
+{"candidate_id": "c_0c9f6407e1", "outcome": "passed", "task_id": "syn_ru_ckr_ceb4cd84"}
+{"candidate_id": "c_7b9c3697f8", "outcome": "passed", "task_id": "syn_ru_ckr_fc2f8016"}
+{"candidate_id": "c_e2362ad65e", "outcome": "passed", "task_id": "syn_ru_ckr_d494a133"}
+{"candidate_id": "c_f4fd8fb7b9", "outcome": "passed", "task_id": "syn_ru_ckr_5523736c"}
+{"candidate_id": "c_f4f77c5bc9", "outcome": "passed", "task_id": "syn_ru_ckr_917580ff"}
+{"candidate_id": "c_7faeb49c6b", "outcome": "passed", "task_id": "syn_ru_ckr_4c0b62a6"}
+{"candidate_id": "c_5d0c4b3a4d", "outcome": "passed", "task_id": "syn_ru_ckr_25b4fa1f"}
+{"candidate_id": "c_e81b41cc50", "outcome": "passed", "task_id": "syn_ru_ckr_71145862"}
+{"candidate_id": "c_df2435c853", "outcome": "passed", "task_id": "syn_ru_ckr_6dd6437e"}
+{"candidate_id": "c_7a6e5386b7", "outcome": "passed", "task_id": "syn_ru_ckr_24aeb1b6"}
+{"candidate_id": "c_0ec2b11603", "outcome": "passed", "task_id": "syn_ru_ckr_704d66f6"}
+{"candidate_id": "c_cf86fb2463", "outcome": "passed", "task_id": "syn_ru_ckr_f68afdd4"}
+{"candidate_id": "c_817c212089", "outcome": "passed", "task_id": "syn_ru_ckr_ab9fd147"}
+{"candidate_id": "c_ab9986a822", "outcome": "passed", "task_id": "syn_ru_ckr_317bea0a"}
+{"candidate_id": "c_f543d041bd", "outcome": "passed", "task_id": "syn_ru_ckr_16aeaa12"}
+{"candidate_id": "c_d045f9d4ec", "outcome": "passed", "task_id": "syn_ru_ckr_31373617"}
+{"candidate_id": "c_9bc6358b80", "outcome": "passed", "task_id": "syn_ru_ckr_6bd181f1"}
+{"candidate_id": "c_90c5b86d40", "outcome": "passed", "task_id": "syn_ru_ckr_4f6028b9"}
+{"candidate_id": "c_d817768f4b", "outcome": "passed", "task_id": "syn_ru_ckr_1f262893"}
+{"candidate_id": "c_997e9a7c8c", "outcome": "passed", "task_id": "syn_ru_ckr_7676b2b2"}
+{"candidate_id": "c_4b7bbd50cc", "outcome": "passed", "task_id": "syn_ru_ckr_68676216"}
+{"candidate_id": "c_b02464f7c2", "outcome": "passed", "task_id": "syn_ru_ckr_d35ea7bf"}
+{"candidate_id": "c_6c20f08633", "outcome": "passed", "task_id": "syn_ru_ckr_d9772be4"}
+{"candidate_id": "c_abe1c2af0b", "outcome": "passed", "task_id": "syn_ru_ckr_5ae93383"}
+{"candidate_id": "c_908987d932", "outcome": "passed", "task_id": "syn_ru_ckr_de232965"}
+{"candidate_id": "c_8267f884a7", "outcome": "passed", "task_id": "syn_ru_ckr_cb578361"}
+{"candidate_id": "c_89313365d9", "outcome": "passed", "task_id": "syn_ru_ckr_8faeb037"}
+{"candidate_id": "c_74bec190ac", "outcome": "passed", "task_id": "syn_ru_ckr_2ee2115d"}
+{"candidate_id": "c_a02edd0252", "outcome": "passed", "task_id": "syn_ru_ckr_a6c42db3"}
+{"candidate_id": "c_4f627ae9e6", "outcome": "passed", "task_id": "syn_ru_ckr_602b0e06"}
+{"candidate_id": "c_83c980f5b9", "outcome": "passed", "task_id": "syn_ru_ckr_70bf593c"}
+{"candidate_id": "c_ffbc40c307", "outcome": "passed", "task_id": "syn_ru_ckr_9c76756f"}
+{"candidate_id": "c_897ffeb521", "outcome": "passed", "task_id": "syn_ru_ckr_b85559b5"}
+{"candidate_id": "c_9779e66fc0", "outcome": "passed", "task_id": "syn_ru_ckr_1afacf94"}
+{"candidate_id": "c_e632c22c80", "outcome": "passed", "task_id": "syn_ru_ckr_f3206daf"}
+{"candidate_id": "c_b663ef305f", "outcome": "passed", "task_id": "syn_ru_ckr_9e646c86"}
+{"candidate_id": "c_085965483b", "outcome": "passed", "task_id": "syn_ru_ckr_f1c36f54"}
+{"candidate_id": "c_4eed05fc88", "outcome": "passed", "task_id": "syn_ru_ckr_20ea46ea"}
+{"candidate_id": "c_0768dd8704", "outcome": "passed", "task_id": "syn_ru_ckr_240eec76"}
+{"candidate_id": "c_648e3a5fba", "outcome": "passed", "task_id": "syn_ru_ckr_9f428a44"}
+{"candidate_id": "c_b25abd9a58", "outcome": "passed", "task_id": "syn_ru_ckr_07d14641"}
+{"candidate_id": "c_9084a633e2", "outcome": "passed", "task_id": "syn_ru_ckr_8c334f49"}
+{"candidate_id": "c_632607949a", "outcome": "passed", "task_id": "syn_ru_ckr_8d694372"}
+{"candidate_id": "c_0ec91c26ee", "outcome": "passed", "task_id": "syn_ru_ckr_4315c44d"}
+{"candidate_id": "c_d73065e49d", "outcome": "passed", "task_id": "syn_ru_ckr_dad62c57"}
+{"candidate_id": "c_ea21389d94", "outcome": "passed", "task_id": "syn_ru_ckr_35673e0d"}
+{"candidate_id": "c_1e3a0195af", "outcome": "passed", "task_id": "syn_ru_ckr_29301624"}
+{"candidate_id": "c_c2165e1f0a", "outcome": "passed", "task_id": "syn_ru_ckr_5756f33f"}
+{"candidate_id": "c_e0a1c21927", "outcome": "passed", "task_id": "syn_ru_ckr_485033a3"}
+{"candidate_id": "c_ceaf5a5878", "outcome": "passed", "task_id": "syn_ru_ckr_dcca61b6"}
+{"candidate_id": "c_5c39e8e84d", "outcome": "passed", "task_id": "syn_ru_ckr_9153d9a1"}
+{"candidate_id": "c_c43c0a7652", "outcome": "passed", "task_id": "syn_ru_ckr_3e83580a"}
+{"candidate_id": "c_4cb4d05bbc", "outcome": "passed", "task_id": "syn_ru_ckr_e6d558c2"}
+{"candidate_id": "c_3c139424c1", "outcome": "passed", "task_id": "syn_ru_ckr_099068c9"}
+{"candidate_id": "c_f0c8ca3f77", "outcome": "passed", "task_id": "syn_ru_ckr_08d289c4"}
+{"candidate_id": "c_71c7f9a80f", "outcome": "passed", "task_id": "syn_ru_ckr_fe17e1cc"}
+{"candidate_id": "c_8e36de53ee", "outcome": "passed", "task_id": "syn_ru_ckr_734f136c"}
+{"candidate_id": "c_44b918d4d2", "outcome": "passed", "task_id": "syn_ru_ckr_10de084e"}
+{"candidate_id": "c_a9f5b54301", "outcome": "passed", "task_id": "syn_ru_ckr_70b0a4f2"}
+{"candidate_id": "c_cfc9e0e227", "outcome": "passed", "task_id": "syn_ru_ckr_d934944b"}
+{"candidate_id": "c_16256a1409", "outcome": "passed", "task_id": "syn_ru_ckr_3fa154ee"}
+{"candidate_id": "c_fe80411041", "outcome": "passed", "task_id": "syn_ru_ckr_27309b19"}
+{"candidate_id": "c_abce0b3665", "outcome": "passed", "task_id": "syn_ru_ckr_107cde1c"}
+{"candidate_id": "c_53a84ae59f", "outcome": "passed", "task_id": "syn_ru_ckr_90da949e"}
+{"candidate_id": "c_690c315d01", "outcome": "passed", "task_id": "syn_ru_ckr_b2f6208f"}
+{"candidate_id": "c_57a5e414b5", "outcome": "passed", "task_id": "syn_ru_ckr_b4b3bb45"}
+{"candidate_id": "c_3bc3ab66dc", "outcome": "passed", "task_id": "syn_ru_ckr_81f4f415"}

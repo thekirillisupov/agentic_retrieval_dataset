@@ -206,6 +206,12 @@ async def compose_one(cfg: SidConfig, llm: BaseLLM, batch_id: str, rank: int,
         bridge_kind=subgraph.get("bridge_kind", "entity"),
         filter=_parse_filter(obj) if filter_spec else [],
         answer_field=str(obj.get("answer_field") or "").strip() if filter_spec else "",
+        # the composer's claims for the mechanic-specific gates; verified
+        # against the index in G_AMBIG / G_VERBATIM, never trusted as-is
+        descriptor=(str(obj.get("ambiguous_descriptor") or "").strip()
+                    if cell.mechanic == "disambiguation_first" else ""),
+        identifier=(str(obj.get("identifier") or "").strip()
+                    if cell.mechanic == "verbatim_lookup" else ""),
     )
 
 

@@ -1419,3 +1419,167 @@ def test_prompts_without_the_index_is_warned_about(caplog):
     with caplog.at_level("WARNING"):
         SidConfig.from_dict({"facets": {"fields": ["region"]}})
     assert caplog.text == ""
+
+
+# --------------------------------------------------------------------------- #
+# G_AMBIG / G_VERBATIM — the mechanic-scoped cheap gates
+# --------------------------------------------------------------------------- #
+
+
+def test_taxonomy_carries_verbatim_lookup_and_described_comparisons():
+    from arqg.sid.taxonomy import MECHANICS, SUBMECHANICS, CellSampler
+    assert "verbatim_lookup" in MECHANICS
+    assert SUBMECHANICS["verbatim_lookup"]
+    # comparison got its harder cousins: at least one side pinned by description
+    assert any("описан" in s for s in SUBMECHANICS["comparison"])
+    # an empty mechanics list enables the new mechanic without a config change
+    sampler = CellSampler(SidConfig())
+    assert "verbatim_lookup" in sampler.mechanics
+
+
+def test_compose_prompt_demands_descriptor_and_identifier_and_mock_returns_them():
+    from arqg.sid.prompts import COMPOSE_SYS, compose_user
+    from arqg.sid.taxonomy import Cell
+    facts = [{"fact_id": "f1", "chunk_id": "org_01.txt::1",
+              "fact_normalized": "Изделие «Барс-7» выпускается по ТУ-4137.",
+              "verbatim_span": "Изделие выпускается по техническим условиям ТУ-4137."},
+             {"fact_id": "f2", "chunk_id": "org_01.txt::2",
+              "fact_normalized": "Подразделением руководит Ирина Ковалёва.",
+              "verbatim_span": "Руководителем подразделения была назначена Ирина Ковалёва."}]
+
+    dis = compose_user(Cell("disambiguation_first", "описание роли вместо имени",
+                            False), facts)
+    assert "ambiguous_descriptor" in dis
+    out = sid_mock_handler(COMPOSE_SYS, dis)
+    assert out.get("ambiguous_descriptor")
+
+    verb = compose_user(Cell("verbatim_lookup", "точный номер документа или закупки",
+                             False), facts)
+    assert "identifier" in verb and "ДОСЛОВНО" in verb
+    out = sid_mock_handler(COMPOSE_SYS, verb)
+    assert out.get("identifier") == "ТУ-4137"
+    assert "ТУ-4137" in out["question"]
+
+
+def _mech_candidate(corpus, chunk_ids, mechanic, question, **extra):
+    cand = _candidate(corpus, chunk_ids, question)
+    cand.mechanic = mechanic
+    for k, v in extra.items():
+        setattr(cand, k, v)
+    return cand
+
+
+def test_ambiguity_gate_wants_a_descriptor_that_reaches_and_competes(tmp_path):
+    """G_AMBIG: no descriptor -> reject; a descriptor pointing at a different
+    branch of the corpus -> reject (it never reaches the referent); the shared
+    template phrasing every org profile opens with -> pass, because competing
+    referents score alongside the gold."""
+    from arqg.sid.gates import ambiguity_check
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    gold = ["org_00.txt::0", "org_00.txt::2"]
+
+    bare = _mech_candidate(env.corpus, gold, "disambiguation_first",
+                           "Вопрос без дескриптора?", descriptor="")
+    res = asyncio.run(ambiguity_check(cfg, env, bare))
+    assert res["ok"] is False and res["reason"] == "no_descriptor"
+
+    lost = _mech_candidate(env.corpus, gold, "disambiguation_first",
+                           "Вопрос?",
+                           descriptor="национальный парк с оборудованными "
+                                      "туристическими маршрутами и смотровой площадкой")
+    res = asyncio.run(ambiguity_check(cfg, env, lost))
+    assert res["ok"] is False and res["reason"] == "descriptor_misses_referent"
+
+    shared = _mech_candidate(env.corpus, gold, "disambiguation_first",
+                             "Вопрос?",
+                             descriptor="компания, основанная в городе группой "
+                                        "инженеров, ранее работавших на профильном "
+                                        "заводе и занимавшаяся ремонтом оборудования "
+                                        "и поставками запасных частей")
+    res = asyncio.run(ambiguity_check(cfg, env, shared))
+    assert res["ok"] is True and res["n_referents"] >= 2
+    asyncio.run(env.aclose())
+
+
+def test_ambiguity_gate_rejects_a_descriptor_that_is_a_paraphrase(tmp_path):
+    """A 'descriptor' that is the gold chunk's own wording pins exactly one
+    document — that is a paraphrase (or a leaked identifier), not an ambiguity,
+    and it is what the gate exists to reject."""
+    from arqg.sid.gates import ambiguity_check
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    gold = ["org_00.txt::1", "org_00.txt::2"]
+    unique = _mech_candidate(env.corpus, gold, "disambiguation_first",
+                             "Вопрос?", descriptor=env.corpus.text(gold[0]))
+    res = asyncio.run(ambiguity_check(cfg, env, unique))
+    assert res["ok"] is False and res["reason"] == "descriptor_is_a_paraphrase"
+    asyncio.run(env.aclose())
+
+
+def test_verbatim_gate_demands_the_identifier_and_the_branch_asymmetry(tmp_path):
+    """G_VERBATIM: the identifier must exist, sit verbatim in the question AND
+    in a gold passage, and the entry chunk must be lexically one-shot while
+    dense alone misses it — the inverse of every other mechanic's want."""
+    from arqg.sid.gates import verbatim_check
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    gold = ["org_01.txt::1", "org_01.txt::2"]   # ::1 carries "ТУ-4137"
+    q = "Кто руководит подразделением, выпускающим изделие по ТУ-4137?"
+    asym = {"org_01.txt::1": {"lex_gap": 0.1, "dense_gap": 0.8, "fused_gap": 0.4},
+            "org_01.txt::2": {"lex_gap": 0.9, "dense_gap": 0.9, "fused_gap": 0.9}}
+
+    ok = verbatim_check(cfg, env, _mech_candidate(
+        env.corpus, gold, "verbatim_lookup", q, identifier="ТУ-4137"), asym)
+    assert ok["ok"] is True and ok["entry_chunk"] == "org_01.txt::1"
+
+    res = verbatim_check(cfg, env, _mech_candidate(
+        env.corpus, gold, "verbatim_lookup", q, identifier=""), asym)
+    assert res["reason"] == "no_identifier"
+
+    res = verbatim_check(cfg, env, _mech_candidate(
+        env.corpus, gold, "verbatim_lookup", "Вопрос без кода?",
+        identifier="ТУ-4137"), asym)
+    assert res["reason"] == "identifier_not_in_question"
+
+    res = verbatim_check(cfg, env, _mech_candidate(
+        env.corpus, gold, "verbatim_lookup", "Что известно про ХХ-999?",
+        identifier="ХХ-999"), asym)
+    assert res["reason"] == "identifier_not_in_gold_passage"
+
+    dense_finds = {gold[0]: {"lex_gap": 0.1, "dense_gap": 0.1, "fused_gap": 0.1},
+                   gold[1]: asym[gold[1]]}
+    res = verbatim_check(cfg, env, _mech_candidate(
+        env.corpus, gold, "verbatim_lookup", q, identifier="ТУ-4137"), dense_finds)
+    assert res["reason"] == "dense_already_finds_entry"
+
+    lex_misses = {gold[0]: {"lex_gap": 0.9, "dense_gap": 0.9, "fused_gap": 0.9},
+                  gold[1]: asym[gold[1]]}
+    res = verbatim_check(cfg, env, _mech_candidate(
+        env.corpus, gold, "verbatim_lookup", q, identifier="ТУ-4137"), lex_misses)
+    assert res["reason"] == "lexical_misses_entry"
+    asyncio.run(env.aclose())
+
+
+def test_cheap_gates_attach_the_mechanic_scoped_verdicts(tmp_path):
+    """The flags ride the cheap-gate result — that is what makes the repair
+    loop re-check them for free — and exist only for the mechanic they police."""
+    cfg = _cfg(tmp_path)
+    env = asyncio.run(build_env(cfg, version="v0"))
+    gold = ["org_00.txt::0", "org_00.txt::1"]
+
+    plain = asyncio.run(cheap_gates(cfg, env, _candidate(env.corpus, gold)))
+    assert "ambig_ok" not in plain and "verbatim_ok" not in plain
+
+    dis = _mech_candidate(env.corpus, gold, "disambiguation_first",
+                          "Вопрос?", descriptor="")
+    res = asyncio.run(cheap_gates(cfg, env, dis))
+    assert res["ambig_ok"] is False
+    assert res["metrics"]["ambiguity"]["reason"] == "no_descriptor"
+
+    verb = _mech_candidate(env.corpus, gold, "verbatim_lookup",
+                           "Вопрос?", identifier="")
+    res = asyncio.run(cheap_gates(cfg, env, verb))
+    assert res["verbatim_ok"] is False
+    assert res["metrics"]["verbatim"]["reason"] == "no_identifier"
+    asyncio.run(env.aclose())

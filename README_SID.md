@@ -37,7 +37,7 @@ S1 mine      entity ↔ chunk subgraphs + doc2doc pairs, WITHIN a section scope
 S3 facts     atomic facts with verbatim spans, cached per chunk
    compose   1-of-N questions per coverage cell, from different subgraphs
    ↓
-S4 gates     G_BROAD + G_REACH (retrieval-only) → 1-of-N selection → G_SOLVE
+S4 gates     G_BROAD + G_REACH + G_AMBIG/G_VERBATIM (retrieval-only) → 1-of-N → G_SOLVE
    ↓
 S5 minimize  G_MIN (leave-one-fact-out) → G_REP (fact groups)
    ↓
@@ -307,12 +307,21 @@ section stays reachable for `G_REACH`. Facets ride the same channel — see
 |---|---|---|
 | `G_BROAD` | the whole question as ONE query must not return the whole gold set | trivial tasks |
 | `G_REACH` | every gold chunk reachable by its fact's paraphrase | tasks above the environment's ceiling → `environment_ceiling_pool.jsonl` |
+| `G_AMBIG` | `disambiguation_first` only: the descriptor alone, probed against the index, must denote ≥ 2 plausible referent documents (score band relative to the best hit; near-duplicates of the gold count as restatements, not competitors), the gold's document among them | "ambiguous" descriptors that are paraphrases or leaked identifiers |
+| `G_VERBATIM` | `verbatim_lookup` only: the identifier occurs verbatim in the question AND in a gold passage as the index holds it, and the entry chunk is lexically one-shot (`lex_gap` low) while dense alone misses it (`dense_gap` high) — read off the G_BROAD probe, no extra retrieval | fake identifiers; questions where dense already wins, which teach no tool choice |
 | `G_SOLVE` | answer uniquely derivable from the gold facts; question leaks neither the answer nor the intermediate entities | unsolvable, distorted, self-answering |
 | `G_MIN` | leave-one-**fact**-out, greedy, re-checking every survivor after each removal | bloated gold sets |
 | `G_REP` | every chunk that states a surviving fact joins that fact's group | nothing — it builds labels |
 
 `G_BROAD` and `G_REACH` are the two ends of one interval: not trivial, not
-unreachable.
+unreachable. `G_AMBIG` and `G_VERBATIM` are mechanic-scoped and retrieval-only:
+the composer *claims* an ambiguity or an identifier (extra JSON fields
+`ambiguous_descriptor` / `identifier`, carried in the task's provenance), and
+the gate verifies the claim against the index instead of trusting it. Both ride
+the cheap-gate result, so a question rewritten by the repair loop is re-checked
+automatically. `G_MIN` may not drop the identifier's carrier chunk from a
+`verbatim_lookup` task — the question addresses that document by its code, so
+the carrier is load-bearing by definition, whatever the judge finds redundant.
 
 **G_REACH probes with the paraphrase, not with the gold's own wording.** A
 fact's `verbatim_span` is by construction an exact substring of the chunk it has

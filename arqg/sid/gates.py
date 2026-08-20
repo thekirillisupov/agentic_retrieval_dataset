@@ -26,7 +26,7 @@ from typing import Any
 from ..llm import BaseLLM, LLMConnectionError
 from ..utils import append_jsonl, load_done_keys, log, read_jsonl
 from .config import SidConfig
-from .env import Env
+from .env import Env, chunk_passage_text
 from .prompts import (ENTAIL_SYS, SOLVE_DEVIL_SYS, SOLVE_SYS, entail_user,
                       solve_user)
 from .retrieval import aggregate_gaps, aggregate_gaps_over_groups, gap_bin
@@ -37,7 +37,10 @@ from .schema import Candidate, sid_hash
 # clear G_REACH and then lose their 1-of-N batch used to vanish from the stats
 # (G_REACH.passed > G_SOLVE.seen with nothing in between to explain the gap),
 # which made the funnel unreadable exactly when someone audited it.
-GATE_ORDER = ["G_BROAD", "G_REACH", "SELECT_1_OF_N", "G_SOLVE", "G_MIN", "G_REP"]
+# G_AMBIG / G_VERBATIM are mechanic-scoped cheap gates: only disambiguation_first
+# candidates are seen by the former, only verbatim_lookup by the latter.
+GATE_ORDER = ["G_BROAD", "G_REACH", "G_AMBIG", "G_VERBATIM", "SELECT_1_OF_N",
+              "G_SOLVE", "G_MIN", "G_REP"]
 
 
 @dataclass
@@ -139,7 +142,7 @@ async def cheap_gates(cfg: SidConfig, env: Env, cand: Candidate) -> dict[str, An
             reachable[cid] = True
     reach_ok = all(reachable.values()) if reachable else False
 
-    return {
+    res: dict[str, Any] = {
         "broad_ok": broad_ok,
         "reach_ok": reach_ok,
         "unreachable": [c for c, ok in reachable.items() if not ok],
@@ -154,6 +157,123 @@ async def cheap_gates(cfg: SidConfig, env: Env, cand: Candidate) -> dict[str, An
                 for g in gold},
         },
     }
+    # Mechanic-scoped cheap gates. Computed here rather than in the stage
+    # driver so a repaired question (solve_stage re-runs cheap_gates) is
+    # re-checked automatically — the descriptor / identifier may have changed
+    # with the phrasing.
+    if cand.mechanic == "disambiguation_first" and cfg.gates.run_ambiguity:
+        amb = await ambiguity_check(cfg, env, cand)
+        res["ambig_ok"] = amb.pop("ok")
+        res["metrics"]["ambiguity"] = amb
+    if cand.mechanic == "verbatim_lookup" and cfg.gates.run_verbatim:
+        verb = verbatim_check(cfg, env, cand, res["metrics"]["per_chunk_gaps"])
+        res["verbatim_ok"] = verb.pop("ok")
+        res["metrics"]["verbatim"] = verb
+    return res
+
+
+def _doc_of(env: Env, chunk_id: str) -> str:
+    c = env.corpus.get(chunk_id)
+    return (c.document_id or c.file_name) if c is not None else chunk_id
+
+
+async def ambiguity_check(cfg: SidConfig, env: Env, cand: Candidate) -> dict[str, Any]:
+    """G_AMBIG — the descriptor must denote >= 2 plausible referents.
+
+    ``disambiguation_first`` claims its starting entity is ambiguous, but the
+    composer's claim is a prompt instruction, not a property of the corpus: a
+    "descriptor" matching exactly one document is a paraphrase (or a leaked
+    identifier — «закупка с кодом pn_lot_…»), and every later gate happily
+    passes it. The check is retrieval-only. The *referent set* is the documents
+    scoring within ``ambiguity_sim_ratio`` of the descriptor probe's best hit;
+    the gate demands the gold's document inside it (the descriptor does point
+    at the referent) and at least ``ambiguity_min_referents − 1`` competing
+    documents alongside — an ambiguity the agent actually has to resolve.
+    Counting top-k hits without the score band would be vacuous (any query
+    returns k hits), and a band anchored on the gold rather than the best hit
+    would let a descriptor that describes the referent *badly* pass on the
+    crowd of equally-bad matches. A hit nearly identical to a gold chunk
+    (``ambiguity_dup_ceiling``) is a restatement, not a competitor.
+    """
+    g = cfg.gates
+    desc = (cand.descriptor or "").strip()
+    if not desc:
+        return {"ok": False, "reason": "no_descriptor", "n_referents": 0}
+    gold = cand.chunk_ids
+    gold_docs = {_doc_of(env, c) for c in gold}
+    probe = await env.searcher.probe(desc, max(g.ambiguity_top_k, g.top_k), gold)
+    hit_ids = probe.hit_ids
+    qvec = (await env.embedder.embed([desc], kind="query"))[0]
+    sims = env.dense.scores_for(qvec, list(dict.fromkeys(hit_ids + list(gold))))
+    best = max(sims.values(), default=0.0)
+    best_gold = max((sims.get(c, 0.0) for c in gold), default=0.0)
+    threshold = best * g.ambiguity_sim_ratio
+    if best <= 0.0 or best_gold < threshold:
+        return {"ok": False, "reason": "descriptor_misses_referent",
+                "n_referents": 0, "best_gold_sim": round(best_gold, 4),
+                "best_hit_sim": round(best, 4)}
+    # near-duplicates of the gold (сводные обзоры, mirrored notices) restate
+    # the referent instead of competing with it
+    dup: dict[str, float] = {h: 0.0 for h in hit_ids}
+    for c in gold:
+        gvec = env.dense.vec(c)
+        if gvec is None:
+            continue
+        for h, s in env.dense.scores_for(gvec, hit_ids).items():
+            dup[h] = max(dup[h], s)
+    competitors = {_doc_of(env, h) for h in hit_ids
+                   if _doc_of(env, h) not in gold_docs
+                   and sims.get(h, 0.0) >= threshold
+                   and dup[h] < g.ambiguity_dup_ceiling}
+    n_referents = 1 + len(competitors)
+    ok = n_referents >= max(2, g.ambiguity_min_referents)
+    return {"ok": ok,
+            "reason": "" if ok else "descriptor_is_a_paraphrase",
+            "n_referents": n_referents,
+            "best_gold_sim": round(best_gold, 4),
+            "best_hit_sim": round(best, 4),
+            "competitor_docs": sorted(competitors)[:5]}
+
+
+def verbatim_check(cfg: SidConfig, env: Env, cand: Candidate,
+                   per_chunk_gaps: dict[str, dict[str, float]]) -> dict[str, Any]:
+    """G_VERBATIM — the identifier is real, and the branch asymmetry holds.
+
+    The mechanic exists to teach tool choice, so its acceptance condition is
+    the *inverse* of what every other mechanic wants from the entry chunk:
+    trivial for the lexical branch (``lex_gap`` at or below the low bin —
+    grep/must_contain solves it in one shot) while the dense branch alone
+    misses it (``dense_gap`` high — the лексический промах эмбеддера the
+    never-retrieved bucket is made of). Both gaps were already measured by the
+    G_BROAD probe, so the gate adds no retrieval call; what it adds is the
+    harness check that the identifier occurs verbatim in the question AND in a
+    gold chunk's passage *as the index holds it* (title and facets included —
+    zakupki packs the purchase number into the title).
+    """
+    g = cfg.gates
+    ident = (cand.identifier or "").strip()
+    if not ident:
+        return {"ok": False, "reason": "no_identifier"}
+    if ident not in cand.question:
+        return {"ok": False, "reason": "identifier_not_in_question"}
+    entry = []
+    for cid in cand.chunk_ids:
+        c = env.corpus.get(cid)
+        if c is not None and ident in chunk_passage_text(c, cfg):
+            entry.append(cid)
+    if not entry:
+        return {"ok": False, "reason": "identifier_not_in_gold_passage"}
+    cid = min(entry, key=lambda c: per_chunk_gaps.get(c, {}).get("lex_gap", 1.0))
+    gaps = per_chunk_gaps.get(cid, {})
+    lex = gaps.get("lex_gap", 1.0)
+    dense = gaps.get("dense_gap", 0.0)
+    detail = {"entry_chunk": cid, "entry_lex_gap": round(lex, 4),
+              "entry_dense_gap": round(dense, 4)}
+    if lex > g.verbatim_lex_gap_max:
+        return {"ok": False, "reason": "lexical_misses_entry", **detail}
+    if dense < g.verbatim_dense_gap_min:
+        return {"ok": False, "reason": "dense_already_finds_entry", **detail}
+    return {"ok": True, "reason": "", **detail}
 
 
 async def remeasure(cfg: SidConfig, env: Env, rec: dict) -> dict[str, Any]:
@@ -467,6 +587,22 @@ async def run_gates(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM,
                     "mechanic": cand.mechanic, "unreachable": res["unreachable"],
                     "index_version": env.corpus.version})
                 continue
+        # mechanic-scoped cheap gates: the keys exist only for the mechanic
+        # they police, so other candidates are neither seen nor counted
+        if "ambig_ok" in res:
+            stats.record("G_AMBIG", cand.mechanic, res["ambig_ok"])
+            if not res["ambig_ok"]:
+                _decide(decisions, "candidate_id", cand.candidate_id,
+                        "rejected_G_AMBIG",
+                        reason=res["metrics"].get("ambiguity", {}).get("reason", ""))
+                continue
+        if "verbatim_ok" in res:
+            stats.record("G_VERBATIM", cand.mechanic, res["verbatim_ok"])
+            if not res["verbatim_ok"]:
+                _decide(decisions, "candidate_id", cand.candidate_id,
+                        "rejected_G_VERBATIM",
+                        reason=res["metrics"].get("verbatim", {}).get("reason", ""))
+                continue
         survivors.append((cand, res))
 
     new_winners = _pick_batch_winners(cfg, survivors, prior_bins(cfg))
@@ -529,11 +665,14 @@ async def run_gates(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM,
                     break
                 cand = repaired
                 res = await cheap_gates(cfg, env, cand)      # the question changed
-                if not (res["broad_ok"] and res["reach_ok"]):
+                failed = next((name for name, ok in (
+                    ("broad", res["broad_ok"]), ("reach", res["reach_ok"]),
+                    ("ambiguity", res.get("ambig_ok", True)),
+                    ("verbatim", res.get("verbatim_ok", True))) if not ok), "")
+                if failed:
                     stats.record("G_SOLVE", cand.mechanic, False)
                     _decide(decisions, "candidate_id", cand.candidate_id,
-                            "rejected_after_repair",
-                            reason="broad" if not res["broad_ok"] else "reach")
+                            "rejected_after_repair", reason=failed)
                     return None
                 clean, why = check_clean(cfg, checker, cand)
                 if not clean:
@@ -578,6 +717,12 @@ async def run_gates(cfg: SidConfig, env: Env, gen: BaseLLM, judge: BaseLLM,
 
 
 def _to_record(cfg: SidConfig, cand: Candidate, res: dict, agreement: bool) -> dict:
+    passed = ["G_BROAD", "G_REACH"]
+    if res.get("ambig_ok"):
+        passed.append("G_AMBIG")
+    if res.get("verbatim_ok"):
+        passed.append("G_VERBATIM")
+    passed.append("G_SOLVE")
     return {
         "task_id": f"syn_{cfg.language}_{cfg.corpus_name}_"
                    f"{sid_hash(cand.candidate_id, n=8)}",
@@ -607,13 +752,16 @@ def _to_record(cfg: SidConfig, cand: Candidate, res: dict, agreement: bool) -> d
             "bridge_kind": cand.bridge_kind,
             "instantiation_rank": cand.instantiation_rank,
             "compose_iters": cand.compose_iters,
-            "gates_passed": ["G_BROAD", "G_REACH", "G_SOLVE"],
+            "gates_passed": passed,
             "dual_critic_agreement": agreement,
             "generator_model": cand.generator_model,
             "taxonomy_version": cfg.taxonomy_version,
             # S3c verdict (status, exit reason, iterations, declared filter);
             # {} for mechanics outside completeness.mechanics or when off
             "completeness": cand.completeness,
+            # G_AMBIG / G_VERBATIM material, for eval tooling and audits
+            **({"descriptor": cand.descriptor} if cand.descriptor else {}),
+            **({"identifier": cand.identifier} if cand.identifier else {}),
         },
     }
 
@@ -685,6 +833,23 @@ async def run_minimize(cfg: SidConfig, env: Env, judge: BaseLLM,
                     log.info("S5: %s — G_MIN removal would drop gold document(s) "
                              "%s from a completeness-verified task; vetoed",
                              rec["task_id"], sorted(before - after))
+                    minimized, removed = facts, 0
+            # For verbatim_lookup the identifier's carrier is load-bearing by
+            # definition — the question addresses the entry document by its
+            # code, and G_VERBATIM verified the code sits in a gold passage.
+            # A removal that leaves no gold chunk carrying it would break the
+            # property the task exists to teach, whatever the judge thinks.
+            ident = str(rec.get("provenance", {}).get("identifier") or "")
+            if removed and ident:
+                def _carries(fs: list[dict]) -> bool:
+                    for f in fs:
+                        c = env.corpus.get(f["chunk_id"])
+                        if c is not None and ident in chunk_passage_text(c, cfg):
+                            return True
+                    return False
+                if _carries(facts) and not _carries(minimized):
+                    log.info("S5: %s — G_MIN removal would drop the identifier's "
+                             "carrier chunk; vetoed", rec["task_id"])
                     minimized, removed = facts, 0
             facts = minimized
         chunk_ids = list(dict.fromkeys(f["chunk_id"] for f in facts))

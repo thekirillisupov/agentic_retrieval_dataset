@@ -22,6 +22,9 @@ _CHUNK_BLOCK = re.compile(r"\[CHUNK ([^\]]+)\]:?\n(.*?)(?=\n\n\[CHUNK |\n\nИз�
                           re.DOTALL)
 _YEAR = re.compile(r"\b(1[89]\d{2}|20\d{2})\b")
 _CAPS = re.compile(r"[«\"]([^»\"]{2,40})[»\"]|\b([А-ЯЁ][а-яё]{3,})\b")
+# a code-like token for the verbatim_lookup mock: letters-dash-digits (ТУ-4137)
+# or a long digit run (0172200002522000102)
+_IDENT = re.compile(r"\b[А-ЯЁA-Z]{1,4}-\d{3,}\b|\b\d{6,}\b")
 
 
 def _words(text: str) -> set[str]:
@@ -36,6 +39,15 @@ def _sentences(text: str) -> list[str]:
 _TERM_STOP = {"Согласно", "Компания", "Через", "Ежегодно", "Устройство", "Изделие",
               "Основными", "Первоначально", "Национальный", "Главным", "Общий",
               "Совместный", "Отчёт", "Финансирование", "Самый", "Испытания"}
+
+
+def _descriptor_of(text: str) -> str:
+    """A mock ambiguous descriptor: the fact's wording with every proper name
+    stripped. What is left is the corpus's template vocabulary, which by
+    construction fits several documents — the property G_AMBIG demands."""
+    t = re.sub(r"[«\"][^»\"]{2,40}[»\"]", "", text)
+    t = re.sub(r"\b[А-ЯЁA-Z][\w\dёЁ-]*\b", "", t)
+    return " ".join(t.replace(" ,", ",").split()).strip(" ,.")[:140]
 
 
 def _key_terms(text: str, n: int = 2) -> list[str]:
@@ -106,15 +118,36 @@ def _compose(user: str) -> dict[str, Any]:
         "set_aggregation": "Перечислите объекты, относящиеся к {a} наряду с {b}.",
         "comparison": "Чем {a} отличается от {b} по основному показателю?",
         "temporal_resolution": "Какое значение для {a} актуально позже, чем у {b}?",
-        "disambiguation_first": "О каком объекте идёт речь, если он связан с {a}, но не с {b}?",
+        "disambiguation_first": "О каком объекте идёт речь ({desc}), и как он связан с {b}?",
+        "verbatim_lookup": "Какие сведения связывают позицию с обозначением {ident} и {b}?",
     }
-    q = templates.get(mechanic, templates["entity_chain"]).format(a=subject, b=other)
+    desc = ""
+    if mechanic == "disambiguation_first":
+        desc = _descriptor_of(picked[0][2]) if picked else ""
+        if not desc:
+            mechanic = "entity_chain"
+    ident = ""
+    if mechanic == "verbatim_lookup":
+        # the way a cooperative model would: lift a code-like token verbatim
+        # from a quoted fact span (ТУ-4137, 0172200002522000102, ...)
+        m_id = _IDENT.search(user)
+        ident = m_id.group(0) if m_id else ""
+        if not ident:
+            # no identifier in the facts — an honest model degrades to a chain
+            # question, and G_VERBATIM rejects the candidate for want of one
+            mechanic = "entity_chain"
+    q = templates.get(mechanic, templates["entity_chain"]).format(
+        a=subject, b=other, ident=ident, desc=desc)
     out = {
         "question": q,
         "answer": f"{subject}, связанный с {other}.",
         "used_fact_ids": [p[0] for p in picked],
         "reasoning": f"mock composition ({mechanic}) over facts from distinct chunks",
     }
+    if ident:
+        out["identifier"] = ident
+    if desc:
+        out["ambiguous_descriptor"] = desc
     out.update(_mock_filter(user))
     return out
 

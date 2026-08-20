@@ -117,18 +117,40 @@ COMPOSE_SYS = (TAG % "compose") + """
 """
 
 
+# Mechanic-conditional additions to the compose prompt. Each one requires an
+# extra JSON field that the matching gate then verifies against the index —
+# the composer's claim is never trusted on its own (see gates.py: G_AMBIG,
+# G_VERBATIM).
+_MECHANIC_SPECS = {
+    "disambiguation_first": """
+ДЕСКРИПТОР (обязателен для этой механики): дополнительно верни в JSON поле
+"ambiguous_descriptor" — точную формулировку из текста вопроса, которой описана
+стартовая сущность (без имени собственного и без уникальных кодов). Описание
+обязано подходить НЕСКОЛЬКИМ реальным объектам корпуса — иначе это перифраз,
+а не неоднозначность; уточнение в остальной части вопроса выделяет ровно один.""",
+    "verbatim_lookup": """
+ИДЕНТИФИКАТОР (обязателен для этой механики): требование 4 ослаблено ровно в
+одном месте — вопрос ОБЯЗАН содержать точный идентификатор (номер, код,
+обозначение), скопированный ДОСЛОВНО из цитаты факта, так, как его напишет
+пользователь, у которого номер есть на руках. Остальную формулировку пиши
+своими словами. Дополнительно верни в JSON поле "identifier" с этим
+идентификатором — символ в символ, как в вопросе.""",
+}
+
+
 def compose_user(cell, facts: list[dict[str, Any]], feedback: str = "",
                  filter_spec: str = "") -> str:
     mech = MECHANICS[cell.mechanic]
     neg = ("\nДополнительно: вопрос должен содержать ОТРИЦАНИЕ или исключение "
            "(«кроме», «не относящийся к», «за исключением») как содержательное "
            "ограничение, а не как украшение." if cell.has_negation else "")
+    extra = _MECHANIC_SPECS.get(cell.mechanic, "")
     spec = f"\n\n{filter_spec}" if filter_spec else ""
     fb = f"\n\nПРЕДЫДУЩАЯ ПОПЫТКА ОТКЛОНЕНА. Причина: {feedback}\nИсправь именно это." if feedback else ""
     return f"""Механика поиска: {cell.mechanic}
 Что она означает: {mech['plan']}
 Как это должно проявиться в вопросе: {mech['compose']}
-Подтип (используй именно его): {cell.submechanic}{neg}{spec}
+Подтип (используй именно его): {cell.submechanic}{neg}{extra}{spec}
 
 Доступные факты:
 {_facts_block(facts)}

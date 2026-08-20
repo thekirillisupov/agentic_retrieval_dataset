@@ -1,0 +1,24 @@
+{
+  "corpus": "ckr",
+  "index_version": "v0",
+  "n_chunks": 25194,
+  "n_documents": 10460,
+  "unit": {
+    "indexing_unit": "corpus record ({file_name}::{index})",
+    "read_unit": "same record — server-side window == indexed unit",
+    "units_aligned": true
+  },
+  "chunk_chars": {
+    "mean": 413.5,
+    "median": 301.0,
+    "min": 154,
+    "max": 41283
+  },
+  "boundary_diagnostics": {
+    "sample": 200,
+    "ends_midsentence": 0,
+    "starts_midsentence": 0,
+    "share_facts_split_by_boundary": 0.0
+  },
+  "blocking_condition_met": true
+}

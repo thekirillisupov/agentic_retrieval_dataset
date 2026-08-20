@@ -156,7 +156,7 @@ class MiningConfig:
 @dataclass
 class TaxonomyConfig:
     """S2 — coverage cells (plan §4)."""
-    # A1 mechanics to generate; empty = all six
+    # A1 mechanics to generate; empty = every mechanic in taxonomy.MECHANICS
     mechanics: list[str] = field(default_factory=list)
     negation_rate: float = 0.20           # plan §4.1 wants >= 15%
     # 1-of-N local diversity (plan §4.5). N candidates from *different*
@@ -252,6 +252,33 @@ class GatesConfig:
     # self-retrieval check, and halves its embedding bill. `"verbatim"` and
     # `"both"` (either probe suffices) keep the old behaviour available.
     reach_probe: str = "paraphrase"       # paraphrase | verbatim | both
+    # G_AMBIG — disambiguation_first only. Without it the mechanic drifts: a
+    # "descriptor" that matches exactly one corpus document is a paraphrase
+    # (or, worse, a leaked identifier), and G_SOLVE happily passes it as
+    # trivial. The gate probes the index with the descriptor alone and demands
+    # >= `ambiguity_min_referents` distinct documents scoring within
+    # `ambiguity_sim_ratio` of the best gold hit — i.e. a real competing
+    # referent exists. Retrieval-only, no LLM calls.
+    run_ambiguity: bool = True
+    ambiguity_top_k: int = 20
+    ambiguity_min_referents: int = 2
+    # The referent band, relative to the descriptor probe's best hit. Kept
+    # loose deliberately: an ambiguous descriptor's true referent need not be
+    # its top match — it only has to sit among the plausible ones.
+    ambiguity_sim_ratio: float = 0.85
+    # A hit nearly identical to a gold chunk is a restatement of the referent
+    # (a сводный обзор, a mirrored notice), not a competing one; above this
+    # similarity to the gold it does not count towards the referent tally.
+    ambiguity_dup_ceiling: float = 0.90
+    # G_VERBATIM — verbatim_lookup only. The mechanic's value is the branch
+    # asymmetry: the identifier must make the entry chunk a one-shot lexical
+    # hit (lex_gap <= max) that dense alone misses (dense_gap >= min) — the
+    # per-chunk gaps the G_BROAD probe already measured, so the gate costs no
+    # extra probe. Plus the harness check that the identifier occurs verbatim
+    # in the question and in a gold passage.
+    run_verbatim: bool = True
+    verbatim_lex_gap_max: float = 0.34
+    verbatim_dense_gap_min: float = 0.50
     # G_SOLVE dual-critic — pilot only (plan §6). Off by default: one critic.
     dual_critic: bool = False
     drop_on_disagreement: bool = True
